@@ -219,9 +219,7 @@ class TranscriberApp:
         self.root.dnd_bind("<<Drop>>", self._on_drop)
 
         # ── Transcription Frame ─────────────────────────────────────────
-
-        # ── Transcription Frame ─────────────────────────────────────────
-        self.trans_frame = tk.Frame(self.root, bg=BG)
+        self._build_trans_frame()
 
     def _build_ready_ui(self):
         """Show browse/drop UI when model is cached."""
@@ -282,7 +280,10 @@ class TranscriberApp:
                                      font=("Segoe UI", 9), bg=CARD, fg=RED)
         self.model_label.pack(side="left")
 
-        # Top bar: file info + new file button
+    # ── Transcription Frame ─────────────────────────────────────────────
+    def _build_trans_frame(self):
+        self.trans_frame = tk.Frame(self.root, bg=BG)
+
         top_bar = tk.Frame(self.trans_frame, bg=BG)
         top_bar.pack(fill="x", padx=20, pady=(16, 8))
 
