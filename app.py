@@ -6,6 +6,10 @@ from tkinter import filedialog, messagebox
 from tkinterdnd2 import TkinterDnD, DND_FILES
 from transcriber import Transcriber
 
+# ── Model size info ─────────────────────────────────────────────────────
+MODEL_SIZE = "tiny.en"
+MODEL_SIZE_MB = "~75"
+
 # ── Colors ──────────────────────────────────────────────────────────────
 BG       = "#0f0f1a"
 BG2      = "#16162a"
@@ -181,6 +185,7 @@ class TranscriberApp:
         self.transcriber = None
         self.current_source = None
         self.segments = None
+        self._model_cached = Transcriber.is_model_cached(MODEL_SIZE)
 
         self._build_ui()
 
@@ -197,6 +202,29 @@ class TranscriberApp:
 
         tk.Label(self.drop_frame, text="Transcriber", font=("Segoe UI", 28, "bold"),
                  bg=BG, fg=TXT).pack(pady=(0, 6))
+
+        if self._model_cached:
+            self._build_ready_ui()
+        else:
+            self._build_download_ui()
+
+        # ── Drag-and-Drop ──────────────────────────────────────────────
+        self.drop_frame.drop_target_register(DND_FILES)
+        self.drop_frame.dnd_bind("<<DropEnter>>", self._on_drop_enter)
+        self.drop_frame.dnd_bind("<<DropLeave>>", self._on_drop_leave)
+        self.drop_frame.dnd_bind("<<Drop>>", self._on_drop)
+
+        # Also allow dropping on the whole window as fallback
+        self.root.drop_target_register(DND_FILES)
+        self.root.dnd_bind("<<Drop>>", self._on_drop)
+
+        # ── Transcription Frame ─────────────────────────────────────────
+
+        # ── Transcription Frame ─────────────────────────────────────────
+        self.trans_frame = tk.Frame(self.root, bg=BG)
+
+    def _build_ready_ui(self):
+        """Show browse/drop UI when model is cached."""
         tk.Label(self.drop_frame, text="Drop a file or browse to start",
                  font=("Segoe UI", 12), bg=BG, fg=TXT2).pack(pady=(0, 4))
         tk.Label(self.drop_frame, text="Supports MP3, WAV, MP4, MKV, and more",
@@ -214,23 +242,45 @@ class TranscriberApp:
         self.model_dot = tk.Canvas(model_frame, width=10, height=10,
                                     highlightthickness=0, bg=CARD)
         self.model_dot.pack(side="left", padx=(0, 8))
-        self.model_dot.create_oval(2, 2, 8, 8, fill=TXT3, outline="")
-        self.model_label = tk.Label(model_frame, text="Model: Not loaded",
-                                     font=("Segoe UI", 9), bg=CARD, fg=TXT3)
+        self.model_dot.create_oval(2, 2, 8, 8, fill=GREEN, outline="")
+        self.model_label = tk.Label(model_frame, text=f"Model: {MODEL_SIZE} ready",
+                                     font=("Segoe UI", 9), bg=CARD, fg=GREEN)
         self.model_label.pack(side="left")
 
-        # ── Drag-and-Drop ──────────────────────────────────────────────
-        self.drop_frame.drop_target_register(DND_FILES)
-        self.drop_frame.dnd_bind("<<DropEnter>>", self._on_drop_enter)
-        self.drop_frame.dnd_bind("<<DropLeave>>", self._on_drop_leave)
-        self.drop_frame.dnd_bind("<<Drop>>", self._on_drop)
+    def _build_download_ui(self):
+        """Show download button when model is not cached."""
+        tk.Label(self.drop_frame, text="AI model not downloaded yet",
+                 font=("Segoe UI", 12), bg=BG, fg=TXT2).pack(pady=(0, 4))
+        tk.Label(self.drop_frame,
+                 text=f"Download the Whisper {MODEL_SIZE} model ({MODEL_SIZE_MB}MB) to get started",
+                 font=("Segoe UI", 10), bg=BG, fg=TXT3).pack(pady=(0, 28))
 
-        # Also allow dropping on the whole window as fallback
-        self.root.drop_target_register(DND_FILES)
-        self.root.dnd_bind("<<Drop>>", self._on_drop)
+        self.download_btn = RoundedButton(
+            self.drop_frame, text="Download Model", command=self._download_model,
+            width=220, height=48, bg="#166534", fg=GREEN, font_size=12,
+            hover_bg="#15803d",
+        )
+        self.download_btn.pack(pady=(0, 16))
 
-        # ── Transcription Frame ─────────────────────────────────────────
-        self.trans_frame = tk.Frame(self.root, bg=BG)
+        # Download progress area (hidden initially)
+        self.dl_progress_frame = tk.Frame(self.drop_frame, bg=BG)
+        self.dl_progress_bar = tk.Canvas(self.dl_progress_frame, height=6,
+                                          highlightthickness=0, bg=BG, width=220)
+        self.dl_progress_bar.pack(fill="x")
+        self.dl_progress_label = tk.Label(self.dl_progress_frame, text="",
+                                           font=("Segoe UI", 9), bg=BG, fg=TXT2)
+        self.dl_progress_label.pack(pady=(4, 0))
+
+        # Model status
+        model_frame = tk.Frame(self.drop_frame, bg=CARD, padx=14, pady=8)
+        model_frame.pack(pady=(8, 0))
+        self.model_dot = tk.Canvas(model_frame, width=10, height=10,
+                                    highlightthickness=0, bg=CARD)
+        self.model_dot.pack(side="left", padx=(0, 8))
+        self.model_dot.create_oval(2, 2, 8, 8, fill=RED, outline="")
+        self.model_label = tk.Label(model_frame, text="Model: Not downloaded",
+                                     font=("Segoe UI", 9), bg=CARD, fg=RED)
+        self.model_label.pack(side="left")
 
         # Top bar: file info + new file button
         top_bar = tk.Frame(self.trans_frame, bg=BG)
@@ -373,6 +423,42 @@ class TranscriberApp:
                                        f"Supported: MP3, WAV, M4A, FLAC, OGG, MP4, MKV, etc.")
 
     # ── Actions ─────────────────────────────────────────────────────────
+    def _download_model(self):
+        self.download_btn.configure(state="disabled")
+        self.dl_progress_frame.pack(pady=(0, 16))
+        self.dl_progress_label.configure(text="Downloading model...")
+        self._set_model_status("loading", "Downloading model...")
+        threading.Thread(target=self._download_model_thread, daemon=True).start()
+
+    def _download_model_thread(self):
+        try:
+            self.transcriber = Transcriber(MODEL_SIZE)
+            self._model_cached = True
+            self.root.after(0, self._download_done)
+        except Exception as e:
+            self.root.after(0, self._download_error, str(e))
+
+    def _download_done(self):
+        self.dl_progress_frame.pack_forget()
+        self._set_model_status("loaded", f"Model: {MODEL_SIZE} ready")
+        # Rebuild the drop frame with ready UI
+        for widget in self.drop_frame.winfo_children():
+            widget.destroy()
+        # Re-add icon and title
+        icon_frame = tk.Frame(self.drop_frame, bg=BG)
+        icon_frame.pack(pady=(0, 20))
+        tk.Label(icon_frame, text="\U0001f399", font=("Segoe UI", 52),
+                 bg=BG, fg=ACCENT).pack()
+        tk.Label(self.drop_frame, text="Transcriber", font=("Segoe UI", 28, "bold"),
+                 bg=BG, fg=TXT).pack(pady=(0, 6))
+        self._build_ready_ui()
+
+    def _download_error(self, msg):
+        self.download_btn.configure(state="normal")
+        self.dl_progress_frame.pack_forget()
+        self._set_model_status("error", "Download failed")
+        messagebox.showerror("Download Error", f"Failed to download model:\n{msg}")
+
     def _pick_file(self):
         path = filedialog.askopenfilename(
             title="Select audio or video file",

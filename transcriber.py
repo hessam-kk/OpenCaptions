@@ -10,6 +10,17 @@ class Transcriber:
         self.model = WhisperModel(model_size, device="cpu", compute_type="int8",
                                   download_root=_CACHE_DIR)
 
+    @staticmethod
+    def is_model_cached(model_size="tiny.en"):
+        """Check if the model is already downloaded."""
+        model_dir = os.path.join(_CACHE_DIR, f"models--Systran--faster-whisper-{model_size}")
+        if not os.path.isdir(model_dir):
+            return False
+        blobs_dir = os.path.join(model_dir, "blobs")
+        if not os.path.isdir(blobs_dir):
+            return False
+        return len(os.listdir(blobs_dir)) > 0
+
     def transcribe(self, audio_path, progress_callback=None):
         segments_iter, info = self.model.transcribe(
             audio_path, language="en", beam_size=5
