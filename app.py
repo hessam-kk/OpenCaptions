@@ -307,7 +307,7 @@ class TranscriberApp:
         self.progress_frame = tk.Frame(self.trans_frame, bg=BG2)
         self.progress_frame.pack(fill="x", padx=20, pady=(0, 10))
 
-        self.progress_bar = tk.Canvas(self.progress_frame, height=6,
+        self.progress_bar = tk.Canvas(self.progress_frame, height=8,
                                        highlightthickness=0, bg=BG2)
         self.progress_bar.pack(fill="x", padx=0, pady=(12, 0))
         self.progress_bar.bind("<Configure>", self._draw_progress_bg)
@@ -364,25 +364,21 @@ class TranscriberApp:
     # ── Progress bar ────────────────────────────────────────────────────
     def _draw_progress_bg(self, event=None):
         w = self.progress_bar.winfo_width()
-        h = 6
+        h = 8
         self.progress_bar.delete("all")
-        self.progress_bar.create_rectangle(0, 0, w, h, fill=BORDER, outline="")
+        self.progress_bar.create_rectangle(0, 0, w, h, fill=BORDER, outline="", width=0)
 
     def _update_progress(self, pct):
         w = self.progress_bar.winfo_width()
-        h = 6
+        h = 8
         self.progress_bar.delete("all")
         # Background
-        self.progress_bar.create_rectangle(0, 0, w, h, fill=BORDER, outline="")
-        # Fill with gradient effect
-        fill_w = max(1, int(w * pct))
-        for i in range(fill_w):
-            ratio = i / max(1, fill_w)
-            r = int(124 + (167 - 124) * ratio)
-            g = int(111 + (139 - 111) * ratio)
-            b = int(255 + (250 - 255) * ratio)
-            color = f"#{r:02x}{g:02x}{b:02x}"
-            self.progress_bar.create_line(i, 0, i, h, fill=color, width=1)
+        self.progress_bar.create_rectangle(0, 0, w, h, fill=BORDER, outline="", width=0)
+        # Fill
+        fill_w = max(2, int(w * pct))
+        self.progress_bar.create_rectangle(0, 0, fill_w, h, fill=ACCENT, outline="", width=0)
+        # Glow effect on the right edge
+        self.progress_bar.create_rectangle(fill_w - 4, 0, fill_w, h, fill=ACCENT2, outline="", width=0)
         self.progress_label.configure(text=f"Transcribing... {int(pct * 100)}%")
 
     # ── Drag-and-Drop ──────────────────────────────────────────────────
