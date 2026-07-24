@@ -12,14 +12,21 @@ class Transcriber:
 
     @staticmethod
     def is_model_cached(model_size="tiny.en"):
-        """Check if the model is already downloaded."""
-        model_dir = os.path.join(_CACHE_DIR, f"models--Systran--faster-whisper-{model_size}")
-        if not os.path.isdir(model_dir):
-            return False
-        blobs_dir = os.path.join(model_dir, "blobs")
-        if not os.path.isdir(blobs_dir):
-            return False
-        return len(os.listdir(blobs_dir)) > 0
+        """Check if the model is already downloaded (local or global cache)."""
+        model_name = f"models--Systran--faster-whisper-{model_size}"
+        # Check local cache
+        local_dir = os.path.join(_CACHE_DIR, model_name)
+        if os.path.isdir(local_dir):
+            blobs = os.path.join(local_dir, "blobs")
+            if os.path.isdir(blobs) and len(os.listdir(blobs)) > 0:
+                return True
+        # Check global HuggingFace cache
+        hf_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub", model_name)
+        if os.path.isdir(hf_dir):
+            blobs = os.path.join(hf_dir, "blobs")
+            if os.path.isdir(blobs) and len(os.listdir(blobs)) > 0:
+                return True
+        return False
 
     def transcribe(self, audio_path, progress_callback=None):
         segments_iter, info = self.model.transcribe(
