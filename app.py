@@ -3,6 +3,7 @@ import math
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from tkinterdnd2 import TkinterDnD, DND_FILES
 from transcriber import Transcriber
 
 # ── Colors ──────────────────────────────────────────────────────────────
@@ -171,7 +172,7 @@ class RoundedButton(tk.Canvas):
 
 class TranscriberApp:
     def __init__(self):
-        self.root = tk.Tk()
+        self.root = TkinterDnD.Tk()
         self.root.title("Transcriber")
         self.root.geometry("860x600")
         self.root.minsize(650, 450)
@@ -217,6 +218,16 @@ class TranscriberApp:
         self.model_label = tk.Label(model_frame, text="Model: Not loaded",
                                      font=("Segoe UI", 9), bg=CARD, fg=TXT3)
         self.model_label.pack(side="left")
+
+        # ── Drag-and-Drop ──────────────────────────────────────────────
+        self.drop_frame.drop_target_register(DND_FILES)
+        self.drop_frame.dnd_bind("<<DropEnter>>", self._on_drop_enter)
+        self.drop_frame.dnd_bind("<<DropLeave>>", self._on_drop_leave)
+        self.drop_frame.dnd_bind("<<Drop>>", self._on_drop)
+
+        # Also allow dropping on the whole window as fallback
+        self.root.drop_target_register(DND_FILES)
+        self.root.dnd_bind("<<Drop>>", self._on_drop)
 
         # ── Transcription Frame ─────────────────────────────────────────
         self.trans_frame = tk.Frame(self.root, bg=BG)
@@ -322,6 +333,44 @@ class TranscriberApp:
             color = f"#{r:02x}{g:02x}{b:02x}"
             self.progress_bar.create_line(i, 0, i, h, fill=color, width=1)
         self.progress_label.configure(text=f"Transcribing... {int(pct * 100)}%")
+
+    # ── Drag-and-Drop ──────────────────────────────────────────────────
+    def _on_drop_enter(self, e):
+        self.drop_frame.configure(bg=CARD_HL)
+        for child in self.drop_frame.winfo_children():
+            try:
+                child.configure(bg=CARD_HL)
+            except tk.TclError:
+                pass
+
+    def _on_drop_leave(self, e):
+        self.drop_frame.configure(bg=BG)
+        for child in self.drop_frame.winfo_children():
+            try:
+                child.configure(bg=BG)
+            except tk.TclError:
+                pass
+
+    def _on_drop(self, e):
+        self.drop_frame.configure(bg=BG)
+        for child in self.drop_frame.winfo_children():
+            try:
+                child.configure(bg=BG)
+            except tk.TclError:
+                pass
+
+        files = self.root.splitlist(e.data)
+        if files:
+            path = files[0]
+            ext = os.path.splitext(path)[1].lower()
+            supported = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".opus",
+                         ".aac", ".mp4", ".mkv", ".avi", ".mov", ".webm"}
+            if ext in supported:
+                self._start_transcription(path)
+            else:
+                messagebox.showwarning("Unsupported format",
+                                       f"Cannot transcribe {ext} files.\n"
+                                       f"Supported: MP3, WAV, M4A, FLAC, OGG, MP4, MKV, etc.")
 
     # ── Actions ─────────────────────────────────────────────────────────
     def _pick_file(self):
