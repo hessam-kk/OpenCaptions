@@ -142,22 +142,30 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.selector_bar)
 
-        # Main splitter: transcript area + model panel
+        # Main splitter: transcript + model panel
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(4)
-
-        # Left: transcript + save bar
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        splitter.setHandleWidth(3)
 
         self.transcript = QTextEdit()
         self.transcript.setReadOnly(True)
         self.transcript.setFont(QFont("Cascadia Code", 10))
-        left_layout.addWidget(self.transcript, 1)
+        splitter.addWidget(self.transcript)
 
         # Save buttons row below transcript
+        save_bar = QHBoxLayout()
+        save_bar.setSpacing(8)
+        self.save_btn = QPushButton("Save Transcript (.txt)")
+        self.save_btn.setFixedHeight(30)
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self._save_transcript)
+        save_bar.addWidget(self.save_btn)
+        self.save_srt_btn = QPushButton("Save SRT (.srt)")
+        self.save_srt_btn.setFixedHeight(30)
+        self.save_srt_btn.setEnabled(False)
+        self.save_srt_btn.clicked.connect(self._save_srt)
+        layout.addWidget(splitter, 1)  # stretch=1 so it fills vertical space
+
+        # Save bar below transcript
         save_bar = QHBoxLayout()
         save_bar.setSpacing(8)
         self.save_btn = QPushButton("Save Transcript (.txt)")
@@ -178,9 +186,7 @@ class MainWindow(QMainWindow):
         self.ts_toggle_btn.setChecked(True)
         self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
         save_bar.addWidget(self.ts_toggle_btn)
-        left_layout.addLayout(save_bar)
-
-        splitter.addWidget(left_widget)
+        layout.addLayout(save_bar)
 
         # Right: model manager panel with radio buttons
         model_panel = QWidget()
