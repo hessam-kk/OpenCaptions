@@ -1,2 +1,6 @@
 faster-whisper
-tkinterdnd2
+pyaudiowpatch
+pyside6
+numpy
+requests
+huggingface-hub
