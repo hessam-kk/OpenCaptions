@@ -625,7 +625,7 @@ class MainWindow(QMainWindow):
             self._stop()
             return
 
-        self._online_processor = OnlineASRProcessor(self._transcriber)
+        self._online_processor = OnlineASRProcessor(self._transcriber, buffer_trimming_sec=3.0)
         self._live_committed = ""
 
         self.statusBar().showMessage("Listening...")
@@ -636,7 +636,7 @@ class MainWindow(QMainWindow):
             self._stop()
             return
 
-        self._live_timer.start(1000)
+        self._live_timer.start(500)
 
     def _on_audio_chunk(self, chunk: np.ndarray):
         if self._online_processor:

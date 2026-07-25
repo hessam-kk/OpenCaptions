@@ -74,7 +74,7 @@ class HypothesisBuffer:
 class OnlineASRProcessor:
     """Online ASR processor with local agreement streaming."""
 
-    def __init__(self, transcriber, buffer_trimming_sec: float = 8.0):
+    def __init__(self, transcriber, buffer_trimming_sec: float = 3.0):
         """
         Args:
             transcriber: A Transcriber instance with .transcribe_buffer()
@@ -87,11 +87,18 @@ class OnlineASRProcessor:
         self.transcript_buffer = HypothesisBuffer()
         self.commited: List[Tuple[float, float, str]] = []
         self._total_audio_time: float = 0  # track real-time audio position
+        # Pre-allocate a larger buffer to avoid repeated allocations
+        self._buffer_capacity = int(10 * SAMPLING_RATE)  # 10 seconds max
 
     def insert_audio_chunk(self, audio: np.ndarray) -> None:
         """Append a new audio chunk to the buffer."""
-        self.audio_buffer = np.append(self.audio_buffer, audio)
+        # Use np.concatenate instead of np.append for better performance
+        self.audio_buffer = np.concatenate([self.audio_buffer, audio])
         self._total_audio_time += len(audio) / SAMPLING_RATE
+        
+        # Aggressive trimming: if buffer exceeds 2x trim size, drop old audio immediately
+        if len(self.audio_buffer) > self._buffer_capacity:
+            self._drop_old_audio()
 
     def process_iter(self) -> Tuple[Optional[str], Optional[str], str]:
         """Run inference and return (start, end, committed_text) or (None, None, '').
@@ -180,8 +187,8 @@ class OnlineASRProcessor:
 
     def _drop_old_audio(self) -> None:
         """Aggressively drop old audio when falling behind real-time."""
-        # Keep only the last 5 seconds of audio
-        max_samples = int(5 * SAMPLING_RATE)
+        # Keep only the last 3 seconds of audio (reduced from 5 for lower latency)
+        max_samples = int(3 * SAMPLING_RATE)
         if len(self.audio_buffer) > max_samples:
             dropped_samples = len(self.audio_buffer) - max_samples
             self.audio_buffer = self.audio_buffer[-max_samples:]
