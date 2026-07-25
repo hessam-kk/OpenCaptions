@@ -289,10 +289,6 @@ class MainWindow(QMainWindow):
         self.clear_btn.setFixedHeight(30)
         self.clear_btn.clicked.connect(self._clear_transcript)
         save_bar.addWidget(self.clear_btn)
-        credit = QLabel('Made with love by <a href="https://github.com/hessam-kk/Local-Transcriber" style="color:#a6adc8;">Hessam_kk</a>')
-        credit.setOpenExternalLinks(True)
-        credit.setStyleSheet("font-size: 10px; color: #a6adc8;")
-        save_bar.addWidget(credit)
         layout.addLayout(save_bar)
 
         # Transcription progress bar
@@ -312,6 +308,10 @@ class MainWindow(QMainWindow):
         # Status bar
         self.statusBar().showMessage("Idle")
         self.statusBar().setStyleSheet("QStatusBar { color: #a6adc8; }")
+        self._credit_label = QLabel('Made with \u2764 by <a href="https://github.com/hessam-kk/Local-Transcriber" style="color:#a6adc8;">Hessam_kk</a>')
+        self._credit_label.setOpenExternalLinks(True)
+        self._credit_label.setStyleSheet("font-size: 10px; color: #a6adc8; padding-right: 4px;")
+        self.statusBar().addPermanentWidget(self._credit_label)
 
     # ── Theme ────────────────────────────────────────────────────────────
     def _toggle_theme(self):
