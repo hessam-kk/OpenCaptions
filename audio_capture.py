@@ -30,6 +30,21 @@ def list_loopback_devices() -> List[Tuple[int, str]]:
     return devices
 
 
+def list_microphones() -> List[Tuple[int, str]]:
+    """Return list of (device_index, device_name) for input devices (microphones)."""
+    try:
+        import pyaudiowpatch as pyaudio
+    except ImportError:
+        return []
+    devices = []
+    with pyaudio.PyAudio() as p:
+        for i in range(p.get_device_count()):
+            info = p.get_device_info_by_index(i)
+            if info.get("maxInputChannels", 0) > 0:
+                devices.append((info["index"], info["name"]))
+    return devices
+
+
 def resample_to_16k(audio: np.ndarray, orig_rate: int) -> np.ndarray:
     """Resample float32 audio from orig_rate to 16kHz using np.interp."""
     if orig_rate == SAMPLING_RATE:
@@ -61,6 +76,31 @@ class AudioCapture:
 
     def start(self, device_index: int, callback: Callable[[np.ndarray], None]) -> None:
         """Start capturing from a loopback device. Calls callback with float32 16kHz mono chunks."""
+        import pyaudiowpatch as pyaudio
+
+        self._callback = callback
+        self._running = True
+        self._pa = pyaudio
+        self._pyaudio = pyaudio.PyAudio()
+
+        device_info = self._pyaudio.get_device_info_by_index(device_index)
+        rate = int(device_info["defaultSampleRate"])
+        channels = int(device_info["maxInputChannels"])
+
+        self._stream = self._pyaudio.open(
+            format=self._pa.paInt16,
+            channels=channels,
+            rate=rate,
+            input=True,
+            input_device_index=device_index,
+            frames_per_buffer=1024,
+        )
+
+        self._thread = threading.Thread(target=self._capture_loop, args=(rate, channels), daemon=True)
+        self._thread.start()
+
+    def start_microphone(self, device_index: int, callback: Callable[[np.ndarray], None]) -> None:
+        """Start capturing from a microphone/input device. Calls callback with float32 16kHz mono chunks."""
         import pyaudiowpatch as pyaudio
 
         self._callback = callback

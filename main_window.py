@@ -109,14 +109,17 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(QLabel("Mode:"))
         self.mode_file_radio = QRadioButton("File")
         self.mode_file_radio.setChecked(True)
-        self.mode_live_radio = QRadioButton("Live System Audio")
+        self.mode_live_radio = QRadioButton("Live System Audio (beta)")
+        self.mode_mic_radio = QRadioButton("Microphone")
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self.mode_file_radio, 0)
         self._mode_group.addButton(self.mode_live_radio, 1)
+        self._mode_group.addButton(self.mode_mic_radio, 2)
         self._mode_group.setExclusive(True)
         self._mode_group.idClicked.connect(self._on_mode_changed)
         toolbar.addWidget(self.mode_file_radio)
         toolbar.addWidget(self.mode_live_radio)
+        toolbar.addWidget(self.mode_mic_radio)
 
         toolbar.addStretch()
 
@@ -399,6 +402,16 @@ class MainWindow(QMainWindow):
             for idx, name in devices:
                 self.device_combo.addItem(name, idx)
 
+    def _populate_microphones(self):
+        self.device_combo.clear()
+        devices = list_microphones()
+        if not devices:
+            self.device_combo.addItem("(no microphones found)")
+            self.device_combo.setEnabled(False)
+        else:
+            for idx, name in devices:
+                self.device_combo.addItem(name, idx)
+
     # ── Model management ────────────────────────────────────────────────
     def _refresh_model_status(self):
         for name, widgets in self.model_widgets.items():
@@ -469,11 +482,17 @@ class MainWindow(QMainWindow):
     # ── Mode switching ──────────────────────────────────────────────────
     @Slot(int)
     def _on_mode_changed(self, index: int):
+        is_file = index == 0
         is_live = index == 1
-        self.selector_label.setText("Device:" if is_live else "File:")
-        self.file_path_edit.setVisible(not is_live)
-        self.browse_btn.setVisible(not is_live)
-        self.device_combo.setVisible(is_live)
+        is_mic = index == 2
+        self.selector_label.setText("File:" if is_file else "Device:")
+        self.file_path_edit.setVisible(is_file)
+        self.browse_btn.setVisible(is_file)
+        self.device_combo.setVisible(is_live or is_mic)
+        if is_mic:
+            self._populate_microphones()
+        else:
+            self._populate_devices()
 
     # ── Start / Stop ────────────────────────────────────────────────────
     def _on_start_stop(self):
@@ -619,24 +638,30 @@ class MainWindow(QMainWindow):
 
     # ── Live mode ───────────────────────────────────────────────────────
     def _start_live_mode(self):
+        mode_id = self._mode_group.checkedId()
+        is_mic = mode_id == 2
+        
         device_idx = self.device_combo.currentData()
         if device_idx is None:
-            QMessageBox.warning(self, "No device", "No loopback device available.")
+            QMessageBox.warning(self, "No device", "No device available.")
             self._stop()
             return
 
-        self._online_processor = OnlineASRProcessor(self._transcriber, buffer_trimming_sec=3.0)
+        self._online_processor = OnlineASRProcessor(self._transcriber)
         self._live_committed = ""
 
         self.statusBar().showMessage("Listening...")
         try:
-            self._capture.start(device_idx, self._on_audio_chunk)
+            if is_mic:
+                self._capture.start_microphone(device_idx, self._on_audio_chunk)
+            else:
+                self._capture.start(device_idx, self._on_audio_chunk)
         except Exception as e:
             QMessageBox.critical(self, "Audio Error", f"Failed to start capture:\n{e}")
             self._stop()
             return
 
-        self._live_timer.start(500)
+        self._live_timer.start(1000)
 
     def _on_audio_chunk(self, chunk: np.ndarray):
         if self._online_processor:
