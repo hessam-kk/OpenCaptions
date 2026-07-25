@@ -151,18 +151,6 @@ class MainWindow(QMainWindow):
         self.transcript.setFont(QFont("Cascadia Code", 10))
         splitter.addWidget(self.transcript)
 
-        # Save buttons row below transcript
-        save_bar = QHBoxLayout()
-        save_bar.setSpacing(8)
-        self.save_btn = QPushButton("Save Transcript (.txt)")
-        self.save_btn.setFixedHeight(30)
-        self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self._save_transcript)
-        save_bar.addWidget(self.save_btn)
-        self.save_srt_btn = QPushButton("Save SRT (.srt)")
-        self.save_srt_btn.setFixedHeight(30)
-        self.save_srt_btn.setEnabled(False)
-        self.save_srt_btn.clicked.connect(self._save_srt)
         layout.addWidget(splitter, 1)  # stretch=1 so it fills vertical space
 
         # Save bar below transcript
@@ -179,8 +167,8 @@ class MainWindow(QMainWindow):
         self.save_srt_btn.clicked.connect(self._save_srt)
         save_bar.addWidget(self.save_srt_btn)
         save_bar.addStretch()
-        self.ts_toggle_btn = QPushButton("\u23f1")  # ⏱ stopwatch
-        self.ts_toggle_btn.setFixedSize(30, 30)
+        self.ts_toggle_btn = QPushButton("\u23f1 Timestamps")  # ⏱
+        self.ts_toggle_btn.setFixedHeight(30)
         self.ts_toggle_btn.setToolTip("Toggle timestamps in transcript")
         self.ts_toggle_btn.setCheckable(True)
         self.ts_toggle_btn.setChecked(True)
@@ -244,8 +232,8 @@ class MainWindow(QMainWindow):
 
             # Action button (toggle between download/delete)
             action_btn = QPushButton()
-            action_btn.setFixedHeight(26)
-            action_btn.setStyleSheet("font-size: 11px; padding: 4px 12px;")
+            action_btn.setFixedHeight(28)
+            action_btn.setStyleSheet("font-size: 11px; padding: 4px 12px; margin-bottom: 4px;")
             action_btn.clicked.connect(lambda checked, n=name: self._on_model_action(n))
             g_layout.addWidget(action_btn, 0, Qt.AlignRight)
 
