@@ -450,8 +450,6 @@ class MainWindow(QMainWindow):
         self._live_timer.stop()
         self._online_processor = None
         self.start_btn.setText("Start")
-        self.save_btn.setEnabled(False)
-        self.save_srt_btn.setEnabled(False)
         self.trans_progress.setVisible(False)
         self.trans_progress_label.setText("")
         self.statusBar().showMessage("Idle")
