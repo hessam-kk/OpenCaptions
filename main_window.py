@@ -510,7 +510,14 @@ class MainWindow(QMainWindow):
     def _stop(self):
         self._live_timer.stop()
         self._live_busy = False
-        # Stop live worker
+        # Stop audio capture FIRST to prevent callbacks after processor is cleared
+        try:
+            self._capture.stop()
+        except Exception:
+            pass
+        # Now clear processor so any pending worker results are ignored
+        self._online_processor = None
+        # Stop live worker - wait for it to finish since it only does one iteration
         if self._live_worker:
             try:
                 self._live_worker.result.disconnect()
@@ -521,7 +528,6 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
             if self._live_worker.isRunning():
-                self._live_worker.terminate()
                 self._live_worker.wait(2000)
             self._live_worker = None
         # Stop file worker
@@ -530,12 +536,6 @@ class MainWindow(QMainWindow):
                 self._file_worker.terminate()
                 self._file_worker.wait(2000)
             self._file_worker = None
-        # Stop audio capture
-        try:
-            self._capture.stop()
-        except Exception:
-            pass
-        self._online_processor = None
         self.start_btn.setText("Start")
         self.save_btn.setEnabled(False)
         self.save_srt_btn.setEnabled(False)
@@ -737,9 +737,18 @@ class MainWindow(QMainWindow):
             self._capture.stop()
         except Exception:
             pass
-        if self._live_worker and self._live_worker.isRunning():
-            self._live_worker.terminate()
-            self._live_worker.wait(2000)
+        self._online_processor = None
+        if self._live_worker:
+            try:
+                self._live_worker.result.disconnect()
+            except RuntimeError:
+                pass
+            try:
+                self._live_worker.finished.disconnect()
+            except RuntimeError:
+                pass
+            if self._live_worker.isRunning():
+                self._live_worker.wait(2000)
         if self._file_worker and self._file_worker.isRunning():
             self._file_worker.terminate()
             self._file_worker.wait(2000)
