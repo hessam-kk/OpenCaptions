@@ -4,7 +4,7 @@ import os
 from typing import Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QThread, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QDragEnterEvent, QDropEvent, QTextCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -52,6 +52,23 @@ THEMES = {
 }
 
 
+class LiveInferenceWorker(QThread):
+    """Run live transcription inference in a background thread."""
+    result = Signal(object)  # (start, end, committed_text, tentative_text)
+
+    def __init__(self, processor):
+        super().__init__()
+        self.processor = processor
+
+    def run(self):
+        try:
+            start, end, committed = self.processor.process_iter()
+            tentative = self.processor.get_tentative()
+            self.result.emit((start, end, committed or "", tentative))
+        except Exception:
+            self.result.emit((None, None, "", ""))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -69,6 +86,8 @@ class MainWindow(QMainWindow):
         self._theme: str = "dark"
         self._segments: list = []  # [(start, end, text), ...] for SRT export
         self._show_timestamps: bool = True
+        self._live_busy: bool = False
+        self._live_worker: Optional[LiveInferenceWorker] = None
 
         self.setAcceptDrops(True)
         self._build_ui()
@@ -489,14 +508,18 @@ class MainWindow(QMainWindow):
             self._start_live_mode()
 
     def _stop(self):
+        self._live_timer.stop()
         if self._file_worker and self._file_worker.isRunning():
             self._file_worker.terminate()
+            self._file_worker.wait(2000)
             self._file_worker = None
         if self._capture:
             self._capture.stop()
-        self._live_timer.stop()
         self._online_processor = None
+        self._live_busy = False
         self.start_btn.setText("Start")
+        self.save_btn.setEnabled(False)
+        self.save_srt_btn.setEnabled(False)
         self.trans_progress.setVisible(False)
         self.trans_progress_label.setText("")
         self.statusBar().showMessage("Idle")
@@ -601,18 +624,25 @@ class MainWindow(QMainWindow):
             self._online_processor.insert_audio_chunk(chunk)
 
     def _live_tick(self):
-        if not self._online_processor:
+        if not self._online_processor or self._live_busy:
             return
-        start, end, committed = self._online_processor.process_iter()
-        tentative = self._online_processor.get_tentative()
+        self._live_busy = True
+        self._live_worker = LiveInferenceWorker(self._online_processor)
+        self._live_worker.result.connect(self._on_live_result)
+        self._live_worker.finished.connect(lambda: setattr(self, '_live_busy', False))
+        self._live_worker.start()
 
+    @Slot(object)
+    def _on_live_result(self, result):
+        start, end, committed, tentative = result
         if committed:
             self._live_committed += committed + " "
-            self._update_live_display()
+        self._update_live_display(tentative)
 
-    def _update_live_display(self):
+    def _update_live_display(self, tentative: str = ""):
         committed = self._live_committed.strip()
-        tentative = self._online_processor.get_tentative() if self._online_processor else ""
+        if not tentative and self._online_processor:
+            tentative = self._online_processor.get_tentative()
         if committed and tentative.startswith(committed):
             tail = tentative[len(committed):].strip()
         else:
@@ -687,13 +717,14 @@ class MainWindow(QMainWindow):
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
     def closeEvent(self, event):
-        # Stop audio capture first
+        self._live_timer.stop()
         try:
             self._capture.stop()
         except Exception:
             pass
-        self._live_timer.stop()
-        # Terminate file worker if running
+        if self._live_worker and self._live_worker.isRunning():
+            self._live_worker.terminate()
+            self._live_worker.wait(2000)
         if self._file_worker and self._file_worker.isRunning():
             self._file_worker.terminate()
             self._file_worker.wait(2000)
