@@ -509,15 +509,20 @@ class MainWindow(QMainWindow):
 
     def _stop(self):
         self._live_timer.stop()
-        # Stop live worker first
+        self._live_busy = False
+        # Stop live worker
         if self._live_worker:
-            if self._live_worker.isRunning():
-                self._live_worker.terminate()
-                self._live_worker.wait(2000)
             try:
                 self._live_worker.result.disconnect()
             except RuntimeError:
                 pass
+            try:
+                self._live_worker.finished.disconnect()
+            except RuntimeError:
+                pass
+            if self._live_worker.isRunning():
+                self._live_worker.terminate()
+                self._live_worker.wait(2000)
             self._live_worker = None
         # Stop file worker
         if self._file_worker:
@@ -531,7 +536,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._online_processor = None
-        self._live_busy = False
         self.start_btn.setText("Start")
         self.save_btn.setEnabled(False)
         self.save_srt_btn.setEnabled(False)
@@ -644,8 +648,11 @@ class MainWindow(QMainWindow):
         self._live_busy = True
         self._live_worker = LiveInferenceWorker(self._online_processor)
         self._live_worker.result.connect(self._on_live_result)
-        self._live_worker.finished.connect(lambda: setattr(self, '_live_busy', False))
+        self._live_worker.finished.connect(self._on_live_worker_done)
         self._live_worker.start()
+
+    def _on_live_worker_done(self):
+        self._live_busy = False
 
     @Slot(object)
     def _on_live_result(self, result):
@@ -658,19 +665,10 @@ class MainWindow(QMainWindow):
 
     def _update_live_display(self, tentative: str = ""):
         committed = self._live_committed.strip()
-        if not tentative and self._online_processor:
-            tentative = self._online_processor.get_tentative()
-        if committed and tentative.startswith(committed):
-            tail = tentative[len(committed):].strip()
-        else:
-            tail = tentative
-
         self.transcript.clear()
         t = THEMES[self._theme]
         if committed:
             self.transcript.append(f'<span style="color:{t["text"]};">{committed}</span>')
-        if tail:
-            self.transcript.append(f'<span style="color:{t["muted"]}; font-style:italic;">{tail}</span>')
 
         cursor = self.transcript.textCursor()
         cursor.movePosition(QTextCursor.End)
