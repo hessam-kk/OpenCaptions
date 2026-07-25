@@ -151,31 +151,6 @@ class MainWindow(QMainWindow):
         self.transcript.setFont(QFont("Cascadia Code", 10))
         splitter.addWidget(self.transcript)
 
-        layout.addWidget(splitter, 1)  # stretch=1 so it fills vertical space
-
-        # Save bar below transcript
-        save_bar = QHBoxLayout()
-        save_bar.setSpacing(8)
-        self.save_btn = QPushButton("Save Transcript (.txt)")
-        self.save_btn.setFixedHeight(30)
-        self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self._save_transcript)
-        save_bar.addWidget(self.save_btn)
-        self.save_srt_btn = QPushButton("Save SRT (.srt)")
-        self.save_srt_btn.setFixedHeight(30)
-        self.save_srt_btn.setEnabled(False)
-        self.save_srt_btn.clicked.connect(self._save_srt)
-        save_bar.addWidget(self.save_srt_btn)
-        save_bar.addStretch()
-        self.ts_toggle_btn = QPushButton("\u23f1 Timestamps")  # ⏱
-        self.ts_toggle_btn.setFixedHeight(30)
-        self.ts_toggle_btn.setToolTip("Toggle timestamps in transcript")
-        self.ts_toggle_btn.setCheckable(True)
-        self.ts_toggle_btn.setChecked(True)
-        self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
-        save_bar.addWidget(self.ts_toggle_btn)
-        layout.addLayout(save_bar)
-
         # Right: model manager panel with radio buttons
         model_panel = QWidget()
         model_layout = QVBoxLayout(model_panel)
@@ -266,6 +241,29 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)  # stretch=1 so it fills vertical space
+
+        # Save bar below transcript
+        save_bar = QHBoxLayout()
+        save_bar.setSpacing(8)
+        self.save_btn = QPushButton("Save Transcript (.txt)")
+        self.save_btn.setFixedHeight(30)
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self._save_transcript)
+        save_bar.addWidget(self.save_btn)
+        self.save_srt_btn = QPushButton("Save SRT (.srt)")
+        self.save_srt_btn.setFixedHeight(30)
+        self.save_srt_btn.setEnabled(False)
+        self.save_srt_btn.clicked.connect(self._save_srt)
+        save_bar.addWidget(self.save_srt_btn)
+        save_bar.addStretch()
+        self.ts_toggle_btn = QPushButton("\u23f1 Timestamps")  # ⏱
+        self.ts_toggle_btn.setFixedHeight(30)
+        self.ts_toggle_btn.setToolTip("Toggle timestamps in transcript")
+        self.ts_toggle_btn.setCheckable(True)
+        self.ts_toggle_btn.setChecked(True)
+        self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
+        save_bar.addWidget(self.ts_toggle_btn)
+        layout.addLayout(save_bar)
 
         # Transcription progress bar
         self.trans_progress = QProgressBar()
