@@ -637,5 +637,14 @@ class MainWindow(QMainWindow):
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
     def closeEvent(self, event):
-        self._stop()
+        # Stop audio capture first
+        try:
+            self._capture.stop()
+        except Exception:
+            pass
+        self._live_timer.stop()
+        # Terminate file worker if running
+        if self._file_worker and self._file_worker.isRunning():
+            self._file_worker.terminate()
+            self._file_worker.wait(2000)
         event.accept()
