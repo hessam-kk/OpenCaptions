@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self._selected_model: str = list(MODELS.keys())[0]
         self._theme: str = "dark"
         self._segments: list = []  # [(start, end, text), ...] for SRT export
+        self._show_timestamps: bool = True
 
         self.setAcceptDrops(True)
         self._build_ui()
@@ -123,6 +124,15 @@ class MainWindow(QMainWindow):
         self.theme_btn.setToolTip("Toggle dark/light theme")
         self.theme_btn.clicked.connect(self._toggle_theme)
         toolbar.addWidget(self.theme_btn)
+
+        self.ts_toggle_btn = QPushButton("TS")
+        self.ts_toggle_btn.setFixedSize(32, 32)
+        self.ts_toggle_btn.setToolTip("Toggle timestamps")
+        self.ts_toggle_btn.setStyleSheet("font-weight: bold; font-size: 11px;")
+        self.ts_toggle_btn.setCheckable(True)
+        self.ts_toggle_btn.setChecked(True)
+        self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
+        toolbar.addWidget(self.ts_toggle_btn)
 
         layout.addLayout(toolbar)
 
@@ -312,6 +322,23 @@ class MainWindow(QMainWindow):
             widgets["status"].setStyleSheet(f"color: {t['green'] if is_ready else t['subtext']}; font-size: 11px;")
             widgets["dot"].setStyleSheet(f"background-color: {t['green'] if is_ready else t['muted']}; border-radius: 5px;")
             widgets["disk"].setStyleSheet(f"color: {t['muted']}; font-size: 10px;")
+
+    def _toggle_timestamps(self):
+        self._show_timestamps = self.ts_toggle_btn.isChecked()
+        self._refresh_transcript()
+
+    def _refresh_transcript(self):
+        """Re-render the transcript with or without timestamps."""
+        if not self._segments:
+            return
+        t = THEMES[self._theme]
+        self.transcript.clear()
+        for start, end, text in self._segments:
+            if self._show_timestamps:
+                ts = f"[{self._fmt_ts(start)} → {self._fmt_ts(end)}]"
+                self.transcript.append(f'<span style="color:{t["accent"]};">{ts}</span> {text}')
+            else:
+                self.transcript.append(text)
 
     # ── Radio button handler ────────────────────────────────────────────
     @Slot(int, bool)
@@ -505,8 +532,11 @@ class MainWindow(QMainWindow):
     def _on_file_segment(self, seg_id: float, start: float, end: float, text: str):
         self._segments.append((start, end, text))
         t = THEMES[self._theme]
-        ts = f"[{self._fmt_ts(start)} → {self._fmt_ts(end)}]"
-        self.transcript.append(f'<span style="color:{t["accent"]};">{ts}</span> {text}')
+        if self._show_timestamps:
+            ts = f"[{self._fmt_ts(start)} → {self._fmt_ts(end)}]"
+            self.transcript.append(f'<span style="color:{t["accent"]};">{ts}</span> {text}')
+        else:
+            self.transcript.append(text)
 
     @Slot(float)
     def _on_file_progress(self, pct: float):
