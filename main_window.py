@@ -67,6 +67,7 @@ class MainWindow(QMainWindow):
         self._selected_file: Optional[str] = None
         self._selected_model: str = list(MODELS.keys())[0]
         self._theme: str = "dark"
+        self._segments: list = []  # [(start, end, text), ...] for SRT export
 
         self.setAcceptDrops(True)
         self._build_ui()
@@ -110,6 +111,12 @@ class MainWindow(QMainWindow):
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._save_transcript)
         toolbar.addWidget(self.save_btn)
+
+        self.save_srt_btn = QPushButton("Save SRT")
+        self.save_srt_btn.setFixedHeight(32)
+        self.save_srt_btn.setEnabled(False)
+        self.save_srt_btn.clicked.connect(self._save_srt)
+        toolbar.addWidget(self.save_srt_btn)
 
         self.theme_btn = QPushButton("\u263e")  # ☾
         self.theme_btn.setFixedSize(32, 32)
@@ -430,6 +437,8 @@ class MainWindow(QMainWindow):
 
         self.start_btn.setText("Stop")
         self.save_btn.setEnabled(True)
+        self.save_srt_btn.setEnabled(True)
+        self._segments = []
         self.transcript.clear()
 
         if self._mode_group.checkedId() == 0:
@@ -446,6 +455,8 @@ class MainWindow(QMainWindow):
         self._live_timer.stop()
         self._online_processor = None
         self.start_btn.setText("Start")
+        self.save_btn.setEnabled(False)
+        self.save_srt_btn.setEnabled(False)
         self.trans_progress.setVisible(False)
         self.trans_progress_label.setText("")
         self.statusBar().showMessage("Idle")
@@ -499,6 +510,7 @@ class MainWindow(QMainWindow):
 
     @Slot(int, float, float, str)
     def _on_file_segment(self, seg_id: float, start: float, end: float, text: str):
+        self._segments.append((start, end, text))
         ts = f"[{self._fmt_ts(start)} → {self._fmt_ts(end)}]"
         self.transcript.append(f'<span style="color:#89b4fa;">{ts}</span> {text}')
 
@@ -591,6 +603,34 @@ class MainWindow(QMainWindow):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
             self.statusBar().showMessage(f"Saved to {os.path.basename(path)}")
+
+    def _save_srt(self):
+        if not self._segments:
+            return
+        if self._selected_file:
+            base = os.path.splitext(self._selected_file)[0]
+            default_path = base + ".srt"
+        else:
+            default_path = ""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save SRT Subtitles", default_path,
+            "SRT files (*.srt);;All files (*.*)"
+        )
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                for i, (start, end, text) in enumerate(self._segments, 1):
+                    f.write(f"{i}\n")
+                    f.write(f"{self._srt_ts(start)} --> {self._srt_ts(end)}\n")
+                    f.write(f"{text}\n\n")
+            self.statusBar().showMessage(f"Saved to {os.path.basename(path)}")
+
+    @staticmethod
+    def _srt_ts(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int((seconds - int(seconds)) * 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
     # ── Helpers ─────────────────────────────────────────────────────────
     @staticmethod
