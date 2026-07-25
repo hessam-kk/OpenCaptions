@@ -1,0 +1,40 @@
+name: Build Executable
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build executable
+        run: |
+          pyinstaller --onefile --windowed \
+            --name "WhisperTranscriber" \
+            --icon "icon.png" \
+            --add-data "icon.png;." \
+            --hidden-import "faster_whisper" \
+            --hidden-import "pyaudiowpatch" \
+            --hidden-import "PySide6" \
+            --hidden-import "numpy" \
+            --hidden-import "huggingface_hub" \
+            main.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperTranscriber-windows
+          path: dist/WhisperTranscriber.exe
