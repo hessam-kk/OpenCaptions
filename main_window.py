@@ -37,6 +37,20 @@ from model_manager import (
 from streaming import OnlineASRProcessor
 from transcriber import FileTranscribeWorker, Transcriber
 
+# ── Themes ──────────────────────────────────────────────────────────────
+THEMES = {
+    "dark": {
+        "bg": "#1e1e2e", "bg2": "#181825", "surface": "#313244",
+        "text": "#cdd6f4", "subtext": "#a6adc8", "muted": "#6c7086",
+        "accent": "#89b4fa", "green": "#4ade80", "border": "#45475a",
+    },
+    "light": {
+        "bg": "#eff1f5", "bg2": "#e6e9ef", "surface": "#ccd0da",
+        "text": "#4c4f69", "subtext": "#6c6f85", "muted": "#9ca0b0",
+        "accent": "#1e66f5", "green": "#40a02b", "border": "#bcc0cc",
+    },
+}
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -52,9 +66,11 @@ class MainWindow(QMainWindow):
         self._live_timer.timeout.connect(self._live_tick)
         self._selected_file: Optional[str] = None
         self._selected_model: str = list(MODELS.keys())[0]
+        self._theme: str = "dark"
 
         self.setAcceptDrops(True)
         self._build_ui()
+        self._apply_theme()
         self._refresh_model_status()
         self._on_mode_changed(0)
 
@@ -94,6 +110,12 @@ class MainWindow(QMainWindow):
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._save_transcript)
         toolbar.addWidget(self.save_btn)
+
+        self.theme_btn = QPushButton("\u263e")  # ☾
+        self.theme_btn.setFixedSize(32, 32)
+        self.theme_btn.setToolTip("Toggle dark/light theme")
+        self.theme_btn.clicked.connect(self._toggle_theme)
+        toolbar.addWidget(self.theme_btn)
 
         layout.addLayout(toolbar)
 
@@ -247,6 +269,47 @@ class MainWindow(QMainWindow):
         # Status bar
         self.statusBar().showMessage("Idle")
         self.statusBar().setStyleSheet("QStatusBar { color: #a6adc8; }")
+
+    # ── Theme ────────────────────────────────────────────────────────────
+    def _toggle_theme(self):
+        self._theme = "light" if self._theme == "dark" else "dark"
+        self._apply_theme()
+
+    def _apply_theme(self):
+        t = THEMES[self._theme]
+        is_dark = self._theme == "dark"
+        self.theme_btn.setText("\u2600" if is_dark else "\u263e")  # ☀ or ☾
+
+        # Window + central widget
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{ background-color: {t['bg']}; color: {t['text']}; }}
+            QGroupBox {{ border: 1px solid {t['border']}; border-radius: 4px; margin-top: 4px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 4px; color: {t['subtext']}; }}
+            QLabel {{ color: {t['text']}; }}
+            QRadioButton {{ color: {t['text']}; spacing: 6px; }}
+            QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 7px; border: 2px solid {t['border']}; background: {t['bg2']}; }}
+            QRadioButton::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']}; }}
+            QComboBox {{ background-color: {t['surface']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 4px 8px; border-radius: 4px; }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{ background-color: {t['surface']}; color: {t['text']}; selection-background-color: {t['accent']}; }}
+            QLineEdit {{ background-color: {t['bg2']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 6px; border-radius: 4px; }}
+            QPushButton {{ background-color: {t['surface']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 4px; padding: 4px 12px; }}
+            QPushButton:hover {{ background-color: {t['accent']}; color: {t['bg']}; border-color: {t['accent']}; }}
+            QPushButton:disabled {{ color: {t['muted']}; border-color: {t['bg2']}; }}
+            QTextEdit {{ background-color: {t['bg2']}; color: {t['text']}; border: 1px solid {t['border']}; }}
+            QProgressBar {{ background-color: {t['surface']}; border: none; }}
+            QProgressBar::chunk {{ background-color: {t['accent']}; }}
+            QStatusBar {{ color: {t['subtext']}; }}
+            QSplitter::handle {{ background-color: {t['border']}; }}
+        """)
+
+        # Dynamic widget colors that can't be set via stylesheet
+        for name, widgets in self.model_widgets.items():
+            status = get_status(name)
+            is_ready = status == "ready"
+            widgets["status"].setStyleSheet(f"color: {t['green'] if is_ready else t['subtext']}; font-size: 11px;")
+            widgets["dot"].setStyleSheet(f"background-color: {t['green'] if is_ready else t['muted']}; border-radius: 5px;")
+            widgets["disk"].setStyleSheet(f"color: {t['muted']}; font-size: 10px;")
 
     # ── Radio button handler ────────────────────────────────────────────
     @Slot(int, bool)
