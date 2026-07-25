@@ -139,9 +139,6 @@ class MainWindow(QMainWindow):
         self.file_path_edit = QLineEdit()
         self.file_path_edit.setPlaceholderText("No file selected — drag & drop or click Browse")
         self.file_path_edit.setReadOnly(True)
-        self.file_path_edit.setStyleSheet(
-            "QLineEdit { background-color: #1e1e2e; color: #cdd6f4; border: 1px solid #313244; padding: 6px; }"
-        )
         selector_layout.addWidget(self.file_path_edit)
         self.browse_btn = QPushButton("Browse")
         self.browse_btn.setFixedHeight(32)
@@ -163,9 +160,6 @@ class MainWindow(QMainWindow):
         self.transcript = QTextEdit()
         self.transcript.setReadOnly(True)
         self.transcript.setFont(QFont("Cascadia Code", 10))
-        self.transcript.setStyleSheet(
-            "QTextEdit { background-color: #1e1e2e; color: #cdd6f4; border: 1px solid #313244; }"
-        )
         splitter.addWidget(self.transcript)
 
         # Right: model manager panel with radio buttons
@@ -304,6 +298,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover {{ background-color: {t['accent']}; color: {t['bg']}; border-color: {t['accent']}; }}
             QPushButton:disabled {{ color: {t['muted']}; border-color: {t['bg2']}; }}
             QTextEdit {{ background-color: {t['bg2']}; color: {t['text']}; border: 1px solid {t['border']}; }}
+            QLineEdit {{ background-color: {t['bg2']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 6px; border-radius: 4px; }}
             QProgressBar {{ background-color: {t['surface']}; border: none; }}
             QProgressBar::chunk {{ background-color: {t['accent']}; }}
             QStatusBar {{ color: {t['subtext']}; }}
@@ -511,8 +506,9 @@ class MainWindow(QMainWindow):
     @Slot(int, float, float, str)
     def _on_file_segment(self, seg_id: float, start: float, end: float, text: str):
         self._segments.append((start, end, text))
+        t = THEMES[self._theme]
         ts = f"[{self._fmt_ts(start)} → {self._fmt_ts(end)}]"
-        self.transcript.append(f'<span style="color:#89b4fa;">{ts}</span> {text}')
+        self.transcript.append(f'<span style="color:{t["accent"]};">{ts}</span> {text}')
 
     @Slot(float)
     def _on_file_progress(self, pct: float):
@@ -575,10 +571,11 @@ class MainWindow(QMainWindow):
             tail = tentative
 
         self.transcript.clear()
+        t = THEMES[self._theme]
         if committed:
-            self.transcript.append(f'<span style="color:#cdd6f4;">{committed}</span>')
+            self.transcript.append(f'<span style="color:{t["text"]};">{committed}</span>')
         if tail:
-            self.transcript.append(f'<span style="color:#6c7086; font-style:italic;">{tail}</span>')
+            self.transcript.append(f'<span style="color:{t["muted"]}; font-style:italic;">{tail}</span>')
 
         cursor = self.transcript.textCursor()
         cursor.movePosition(QTextCursor.End)
