@@ -113,14 +113,6 @@ class MainWindow(QMainWindow):
         self.theme_btn.clicked.connect(self._toggle_theme)
         toolbar.addWidget(self.theme_btn)
 
-        self.ts_toggle_btn = QPushButton("\u23f1")  # ⏱ stopwatch
-        self.ts_toggle_btn.setFixedSize(32, 32)
-        self.ts_toggle_btn.setToolTip("Toggle timestamps in transcript")
-        self.ts_toggle_btn.setCheckable(True)
-        self.ts_toggle_btn.setChecked(True)
-        self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
-        toolbar.addWidget(self.ts_toggle_btn)
-
         layout.addLayout(toolbar)
 
         # Unified selector bar (file or device depending on mode)
@@ -179,6 +171,13 @@ class MainWindow(QMainWindow):
         self.save_srt_btn.clicked.connect(self._save_srt)
         save_bar.addWidget(self.save_srt_btn)
         save_bar.addStretch()
+        self.ts_toggle_btn = QPushButton("\u23f1")  # ⏱ stopwatch
+        self.ts_toggle_btn.setFixedSize(30, 30)
+        self.ts_toggle_btn.setToolTip("Toggle timestamps in transcript")
+        self.ts_toggle_btn.setCheckable(True)
+        self.ts_toggle_btn.setChecked(True)
+        self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
+        save_bar.addWidget(self.ts_toggle_btn)
         left_layout.addLayout(save_bar)
 
         splitter.addWidget(left_widget)
