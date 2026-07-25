@@ -87,6 +87,9 @@ class AudioCapture:
     def stop(self) -> None:
         """Stop capturing."""
         self._running = False
+        # Wait for capture thread to exit
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2)
         if self._stream:
             try:
                 self._stream.stop_stream()
@@ -107,9 +110,14 @@ class AudioCapture:
             try:
                 data = self._stream.read(1024, exception_on_overflow=False)
             except Exception:
-                continue
+                break  # Stream closed or error — exit loop
+            if not self._running:
+                break
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             audio_np = stereo_to_mono(audio_np, channels)
             audio_np = resample_to_16k(audio_np, rate)
-            if self._callback:
-                self._callback(audio_np)
+            if self._callback and self._running:
+                try:
+                    self._callback(audio_np)
+                except Exception:
+                    break
