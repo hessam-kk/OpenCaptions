@@ -65,6 +65,7 @@ class AudioCapture:
 
         self._callback = callback
         self._running = True
+        self._pa = pyaudio
         self._pyaudio = pyaudio.PyAudio()
 
         device_info = self._pyaudio.get_device_info_by_index(device_index)
@@ -72,7 +73,7 @@ class AudioCapture:
         channels = int(device_info["maxInputChannels"])
 
         self._stream = self._pyaudio.open(
-            format=self._pyaudio.paInt16,
+            format=self._pa.paInt16,
             channels=channels,
             rate=rate,
             input=True,
