@@ -263,6 +263,10 @@ class MainWindow(QMainWindow):
         self.ts_toggle_btn.setChecked(True)
         self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
         save_bar.addWidget(self.ts_toggle_btn)
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setFixedHeight(30)
+        self.clear_btn.clicked.connect(self._clear_transcript)
+        save_bar.addWidget(self.clear_btn)
         layout.addLayout(save_bar)
 
         # Transcription progress bar
@@ -348,6 +352,13 @@ class MainWindow(QMainWindow):
                 self.transcript.append(f'<span style="color:{t["accent"]};">{ts}</span> {text}')
             else:
                 self.transcript.append(text)
+
+    def _clear_transcript(self):
+        """Clear the transcript and segments, disable save buttons."""
+        self.transcript.clear()
+        self._segments = []
+        self.save_btn.setEnabled(False)
+        self.save_srt_btn.setEnabled(False)
 
     # ── Radio button handler ────────────────────────────────────────────
     @Slot(int, bool)
