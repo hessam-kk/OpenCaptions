@@ -671,9 +671,10 @@ class MainWindow(QMainWindow):
         if not self._online_processor or self._live_busy:
             return
         self._live_busy = True
-        self._live_worker = LiveInferenceWorker(self._online_processor)
-        self._live_worker.result.connect(self._on_live_result)
-        self._live_worker.finished.connect(self._on_live_worker_done)
+        if self._live_worker is None:
+            self._live_worker = LiveInferenceWorker(self._online_processor)
+            self._live_worker.result.connect(self._on_live_result)
+            self._live_worker.finished.connect(self._on_live_worker_done)
         self._live_worker.start()
 
     def _on_live_worker_done(self):
@@ -757,24 +758,5 @@ class MainWindow(QMainWindow):
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
     def closeEvent(self, event):
-        self._live_timer.stop()
-        try:
-            self._capture.stop()
-        except Exception:
-            pass
-        self._online_processor = None
-        if self._live_worker:
-            try:
-                self._live_worker.result.disconnect()
-            except RuntimeError:
-                pass
-            try:
-                self._live_worker.finished.disconnect()
-            except RuntimeError:
-                pass
-            if self._live_worker.isRunning():
-                self._live_worker.wait(2000)
-        if self._file_worker and self._file_worker.isRunning():
-            self._file_worker.terminate()
-            self._file_worker.wait(2000)
+        self._stop()
         event.accept()

@@ -20,7 +20,7 @@ class Transcriber:
     ) -> Generator[Tuple[int, float, float, str, float], None, None]:
         """Yield (segment_id, start, end, text, total_duration)."""
         segments, info = self.model.transcribe(
-            audio_path, language=language, beam_size=1
+            audio_path, language=language, beam_size=5
         )
         duration = info.duration if info.duration else 0
         for i, seg in enumerate(segments):
@@ -36,7 +36,7 @@ class Transcriber:
         segments, _ = self.model.transcribe(
             audio,
             language=language,
-            beam_size=1,
+            beam_size=5,
             word_timestamps=True,
             initial_prompt=initial_prompt,
             condition_on_previous_text=False,
