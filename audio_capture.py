@@ -31,17 +31,25 @@ def list_loopback_devices() -> List[Tuple[int, str]]:
 
 
 def list_microphones() -> List[Tuple[int, str]]:
-    """Return list of (device_index, device_name) for input devices (microphones)."""
+    """Return list of (device_index, device_name) for microphone/input devices."""
     try:
         import pyaudiowpatch as pyaudio
     except ImportError:
         return []
     devices = []
     with pyaudio.PyAudio() as p:
+        try:
+            wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+        except OSError:
+            return []
+        # Get all input devices (not just loopback)
         for i in range(p.get_device_count()):
             info = p.get_device_info_by_index(i)
-            if info.get("maxInputChannels", 0) > 0:
-                devices.append((info["index"], info["name"]))
+            if info["maxInputChannels"] > 0 and info["hostApi"] == wasapi_info["index"]:
+                # Exclude loopback devices (they have "loopback" in name or are output device monitors)
+                name = info["name"].lower()
+                if "loopback" not in name and "monitor" not in name:
+                    devices.append((info["index"], info["name"]))
     return devices
 
 

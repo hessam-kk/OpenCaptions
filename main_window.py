@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from audio_capture import AudioCapture, list_loopback_devices
+from audio_capture import AudioCapture, list_loopback_devices, list_microphones
 from model_manager import (
     MODELS,
     MODELS_DIR,
