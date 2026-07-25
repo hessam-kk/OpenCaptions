@@ -107,28 +107,15 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self._on_start_stop)
         toolbar.addWidget(self.start_btn)
 
-        self.save_btn = QPushButton("Save Transcript")
-        self.save_btn.setFixedHeight(32)
-        self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self._save_transcript)
-        toolbar.addWidget(self.save_btn)
-
-        self.save_srt_btn = QPushButton("Save SRT")
-        self.save_srt_btn.setFixedHeight(32)
-        self.save_srt_btn.setEnabled(False)
-        self.save_srt_btn.clicked.connect(self._save_srt)
-        toolbar.addWidget(self.save_srt_btn)
-
         self.theme_btn = QPushButton("\u263e")  # ☾
         self.theme_btn.setFixedSize(32, 32)
         self.theme_btn.setToolTip("Toggle dark/light theme")
         self.theme_btn.clicked.connect(self._toggle_theme)
         toolbar.addWidget(self.theme_btn)
 
-        self.ts_toggle_btn = QPushButton("TS")
+        self.ts_toggle_btn = QPushButton("\u23f1")  # ⏱ stopwatch
         self.ts_toggle_btn.setFixedSize(32, 32)
-        self.ts_toggle_btn.setToolTip("Toggle timestamps")
-        self.ts_toggle_btn.setStyleSheet("font-weight: bold; font-size: 11px;")
+        self.ts_toggle_btn.setToolTip("Toggle timestamps in transcript")
         self.ts_toggle_btn.setCheckable(True)
         self.ts_toggle_btn.setChecked(True)
         self.ts_toggle_btn.clicked.connect(self._toggle_timestamps)
@@ -157,20 +144,44 @@ class MainWindow(QMainWindow):
 
         # Device picker elements
         self.device_combo = QComboBox()
+        self.device_combo.setObjectName("deviceCombo")
         self._populate_devices()
         selector_layout.addWidget(self.device_combo, 1)  # stretch=1 for full width
 
         layout.addWidget(self.selector_bar)
 
-        # Main splitter: transcript + model panel
+        # Main splitter: transcript area + model panel
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(4)
 
-        # Left: transcript view
+        # Left: transcript + save bar
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+
         self.transcript = QTextEdit()
         self.transcript.setReadOnly(True)
         self.transcript.setFont(QFont("Cascadia Code", 10))
-        splitter.addWidget(self.transcript)
+        left_layout.addWidget(self.transcript, 1)
+
+        # Save buttons row below transcript
+        save_bar = QHBoxLayout()
+        save_bar.setSpacing(8)
+        self.save_btn = QPushButton("Save Transcript (.txt)")
+        self.save_btn.setFixedHeight(30)
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self._save_transcript)
+        save_bar.addWidget(self.save_btn)
+        self.save_srt_btn = QPushButton("Save SRT (.srt)")
+        self.save_srt_btn.setFixedHeight(30)
+        self.save_srt_btn.setEnabled(False)
+        self.save_srt_btn.clicked.connect(self._save_srt)
+        save_bar.addWidget(self.save_srt_btn)
+        save_bar.addStretch()
+        left_layout.addLayout(save_bar)
+
+        splitter.addWidget(left_widget)
 
         # Right: model manager panel with radio buttons
         model_panel = QWidget()
@@ -301,8 +312,15 @@ class MainWindow(QMainWindow):
             QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 7px; border: 2px solid {t['border']}; background: {t['bg2']}; }}
             QRadioButton::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']}; }}
             QComboBox {{ background-color: {t['surface']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 4px 8px; border-radius: 4px; }}
-            QComboBox::drop-down {{ border: none; }}
-            QComboBox QAbstractItemView {{ background-color: {t['surface']}; color: {t['text']}; selection-background-color: {t['accent']}; }}
+            #deviceCombo:hover {{ border-color: {t['accent']}; background-color: {t['bg2']}; }}
+            #deviceCombo:on {{ background-color: {t['bg2']}; border-color: {t['accent']}; }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox QAbstractItemView {{ background-color: {t['surface']}; color: {t['text']}; border: 1px solid {t['border']}; selection-background-color: {t['accent']}; selection-color: {t['bg']}; padding: 4px; outline: none; }}
+            QComboBox QAbstractItemView::item {{ padding: 6px 8px; min-height: 24px; }}
+            QComboBox QAbstractItemView::item:hover {{ background-color: {t['accent']}; color: {t['bg']}; }}
+            QComboBox QAbstractItemView::item:selected {{ background-color: {t['accent']}; color: {t['bg']}; }}
+            #deviceCombo:hover {{ border-color: {t['accent']}; background-color: {t['surface']}; }}
+            #deviceCombo:on {{ background-color: {t['bg2']}; border-color: {t['accent']}; }}
             QLineEdit {{ background-color: {t['bg2']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 6px; border-radius: 4px; }}
             QPushButton {{ background-color: {t['surface']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 4px; padding: 4px 12px; }}
             QPushButton:hover {{ background-color: {t['accent']}; color: {t['bg']}; border-color: {t['accent']}; }}
