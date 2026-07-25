@@ -86,15 +86,22 @@ class OnlineASRProcessor:
         self.buffer_time_offset: float = 0
         self.transcript_buffer = HypothesisBuffer()
         self.commited: List[Tuple[float, float, str]] = []
+        self._total_audio_time: float = 0  # track real-time audio position
 
     def insert_audio_chunk(self, audio: np.ndarray) -> None:
         """Append a new audio chunk to the buffer."""
         self.audio_buffer = np.append(self.audio_buffer, audio)
+        self._total_audio_time += len(audio) / SAMPLING_RATE
 
     def process_iter(self) -> Tuple[Optional[str], Optional[str], str]:
         """Run inference and return (start, end, committed_text) or (None, None, '').
         Also returns tentative text as a second element for display.
         """
+        # If buffer is too large (falling behind), drop old audio aggressively
+        buffer_sec = len(self.audio_buffer) / SAMPLING_RATE
+        if buffer_sec > self.buffer_trimming_sec * 2:
+            self._drop_old_audio()
+
         prompt = self._make_prompt()
         words = self.transcriber.transcribe_buffer(
             self.audio_buffer, initial_prompt=prompt
@@ -170,3 +177,21 @@ class OnlineASRProcessor:
             self.audio_buffer = self.audio_buffer[samples_to_keep:]
             self.buffer_time_offset = cut_time
             self.transcript_buffer.pop_commited(cut_time)
+
+    def _drop_old_audio(self) -> None:
+        """Aggressively drop old audio when falling behind real-time."""
+        # Keep only the last 5 seconds of audio
+        max_samples = int(5 * SAMPLING_RATE)
+        if len(self.audio_buffer) > max_samples:
+            dropped_samples = len(self.audio_buffer) - max_samples
+            self.audio_buffer = self.audio_buffer[-max_samples:]
+            self.buffer_time_offset += dropped_samples / SAMPLING_RATE
+            # Clear committed words that are now outside the buffer
+            self.transcript_buffer.pop_commited(self.buffer_time_offset)
+            self.commited = [
+                (a, b, t) for a, b, t in self.commited
+                if b > self.buffer_time_offset
+            ]
+            # Reset hypothesis buffer to avoid stale matches
+            self.transcript_buffer.buffer = []
+            self.transcript_buffer.new = []
