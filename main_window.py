@@ -509,12 +509,27 @@ class MainWindow(QMainWindow):
 
     def _stop(self):
         self._live_timer.stop()
-        if self._file_worker and self._file_worker.isRunning():
-            self._file_worker.terminate()
-            self._file_worker.wait(2000)
+        # Stop live worker first
+        if self._live_worker:
+            if self._live_worker.isRunning():
+                self._live_worker.terminate()
+                self._live_worker.wait(2000)
+            try:
+                self._live_worker.result.disconnect()
+            except RuntimeError:
+                pass
+            self._live_worker = None
+        # Stop file worker
+        if self._file_worker:
+            if self._file_worker.isRunning():
+                self._file_worker.terminate()
+                self._file_worker.wait(2000)
             self._file_worker = None
-        if self._capture:
+        # Stop audio capture
+        try:
             self._capture.stop()
+        except Exception:
+            pass
         self._online_processor = None
         self._live_busy = False
         self.start_btn.setText("Start")
@@ -634,6 +649,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_live_result(self, result):
+        if not self._online_processor:
+            return
         start, end, committed, tentative = result
         if committed:
             self._live_committed += committed + " "
