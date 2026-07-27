@@ -12,7 +12,8 @@ MODELS = {
     "medium.en": "~1.5 GB",
 }
 
-MODELS_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "WhisperApp", "models")
+MODELS_DIR = os.path.join(os.environ.get(
+    "LOCALAPPDATA", os.path.expanduser("~")), "AudiscribeApp", "models")
 
 
 def _all_model_dirs(model_name: str) -> list:

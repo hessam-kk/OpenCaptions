@@ -1,4 +1,4 @@
-"""Whisper Transcriber — entry point."""
+"""Audiscribe — entry point."""
 
 import os
 import sys

@@ -72,7 +72,7 @@ class LiveInferenceWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Whisper Transcriber")
+        self.setWindowTitle("Audiscribe")
         self.setMinimumSize(900, 600)
 
         self._transcriber: Optional[Transcriber] = None
@@ -308,7 +308,7 @@ class MainWindow(QMainWindow):
         # Status bar
         self.statusBar().showMessage("Idle")
         self.statusBar().setStyleSheet("QStatusBar { color: #a6adc8; }")
-        self._credit_label = QLabel('Made with \u2764 by <a href="https://github.com/hessam-kk/Local-Transcriber" style="color:#a6adc8;">Hessam_kk</a>')
+        self._credit_label = QLabel('Made with \u2764 by <a href="https://github.com/hessam-kk/Audiscribe" style="color:#a6adc8;">Hessam_kk</a>')
         self._credit_label.setOpenExternalLinks(True)
         self._credit_label.setStyleSheet("font-size: 10px; color: #a6adc8; padding-right: 4px;")
         self.statusBar().addPermanentWidget(self._credit_label)
@@ -452,7 +452,7 @@ class MainWindow(QMainWindow):
 
     def _download_model(self, name: str):
         widgets = self.model_widgets[name]
-        widgets["dl_btn"].setEnabled(False)
+        widgets["action_btn"].setEnabled(False)
         widgets["progress"].setVisible(True)
         widgets["progress"].setValue(0)
         self.statusBar().showMessage(f"Downloading model {name}...")
