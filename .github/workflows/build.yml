@@ -1,7 +1,5 @@
 name: Build Executable
 
-name: Build Executable
-
 on:
   push:
     tags:
