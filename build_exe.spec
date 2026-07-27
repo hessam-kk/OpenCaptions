@@ -46,7 +46,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='WhisperTranscriber',
+    name='Audiscribe',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
