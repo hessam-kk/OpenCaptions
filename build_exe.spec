@@ -17,6 +17,8 @@ a = Analysis(
         'huggingface_hub',
         'tokenizers',
         'onnxruntime',
+        'transformers',
+        'transformers.utils.versions',
     ],
     hookspath=[],
     hooksconfig={},

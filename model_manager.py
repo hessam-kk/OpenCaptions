@@ -100,6 +100,7 @@ class DownloadWorker(QThread):
                 repo_id=f"Systran/faster-whisper-{self.model_name}",
                 local_dir=os.path.join(MODELS_DIR, f"models--Systran--faster-whisper-{self.model_name}"),
                 local_dir_use_symlinks=False,
+                tqdm_class=lambda *args, **kwargs: None,  # Disable tqdm progress bar
             )
             self.finished.emit(self.model_name)
         except Exception as e:
