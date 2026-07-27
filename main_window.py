@@ -560,8 +560,9 @@ class MainWindow(QMainWindow):
                 self._file_worker.wait(2000)
             self._file_worker = None
         self.start_btn.setText("Start")
-        self.save_btn.setEnabled(False)
-        self.save_srt_btn.setEnabled(False)
+        has_content = bool(self._segments)
+        self.save_btn.setEnabled(has_content)
+        self.save_srt_btn.setEnabled(has_content)
         self.trans_progress.setVisible(False)
         self.trans_progress_label.setText("")
         self.statusBar().showMessage("Idle")
@@ -633,7 +634,12 @@ class MainWindow(QMainWindow):
         self.trans_progress.setValue(100)
         self.trans_progress_label.setText("Complete")
         self.statusBar().showMessage("Transcription complete")
-        self._stop()
+        self._file_worker = None
+        self.start_btn.setText("Start")
+        self.save_btn.setEnabled(bool(self._segments))
+        self.save_srt_btn.setEnabled(bool(self._segments))
+        self.trans_progress.setVisible(False)
+        self.trans_progress_label.setText("")
 
     @Slot(str)
     def _on_file_error(self, msg: str):
@@ -705,8 +711,14 @@ class MainWindow(QMainWindow):
         self.transcript.setTextCursor(cursor)
 
     # ── Save ────────────────────────────────────────────────────────────
+    def _plain_transcript_text(self) -> str:
+        """Plain transcript text without timestamps."""
+        if self._segments:
+            return "\n".join(text for _, _, text in self._segments)
+        return self.transcript.toPlainText()
+
     def _save_transcript(self):
-        text = self.transcript.toPlainText()
+        text = self._plain_transcript_text()
         if not text.strip():
             return
         # Default to same name/location as the source file
