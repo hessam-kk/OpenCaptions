@@ -1,12 +1,6 @@
 name: Build Executable
 
-on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-  
-  name: Build Executable
+name: Build Executable
 
 on:
   push:
