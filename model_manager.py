@@ -18,10 +18,10 @@ MODELS_DIR = os.path.join(os.environ.get(
 
 def _all_model_dirs(model_name: str) -> list:
     """Return all possible cache directories for a model."""
-    model_id = f"models--Systran--faster-whisper-{model_name}"
     return [
-        os.path.join(MODELS_DIR, model_id),
-        os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub", model_id),
+        os.path.join(MODELS_DIR, model_name),  # faster-whisper expected location
+        os.path.join(MODELS_DIR, f"models--Systran--faster-whisper-{model_name}"),
+        os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub", f"models--Systran--faster-whisper-{model_name}"),
     ]
 
 
@@ -91,17 +91,53 @@ class DownloadWorker(QThread):
         try:
             from huggingface_hub import snapshot_download
 
-            def _progress_callback(current, total):
-                if total and total > 0:
-                    pct = int(current / total * 100)
-                    self.progress.emit(min(pct, 100))
+            worker = self
 
+            class QtTqdm:
+                """Minimal tqdm stand-in for huggingface_hub snapshot downloads in a Qt GUI."""
+
+                def __init__(self, *args, **kwargs):
+                    self.total = kwargs.get("total") or 0
+                    self.n = kwargs.get("initial", 0) or 0
+                    self.desc = kwargs.get("desc", "")
+                    self.format_dict = {"rate": None}
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args, **kwargs):
+                    pass
+
+                def _emit_progress(self):
+                    if self.total and self.total > 0:
+                        pct = int(self.n / self.total * 100)
+                        worker.progress.emit(min(pct, 100))
+
+                def update(self, n=1):
+                    self.n += n
+                    self._emit_progress()
+
+                def refresh(self):
+                    self._emit_progress()
+
+                def close(self):
+                    pass
+
+                def set_description(self, desc=None, refresh=True):
+                    if desc is not None:
+                        self.desc = desc
+
+                def set_postfix_str(self, postfix="", refresh=False):
+                    pass
+
+            os.makedirs(MODELS_DIR, exist_ok=True)
+            # Download directly to the location faster-whisper expects: MODELS_DIR/{model_name}/
             snapshot_download(
                 repo_id=f"Systran/faster-whisper-{self.model_name}",
-                local_dir=os.path.join(MODELS_DIR, f"models--Systran--faster-whisper-{self.model_name}"),
-                local_dir_use_symlinks=False,
-                tqdm_class=lambda *args, **kwargs: None,  # Disable tqdm progress bar
+                local_dir=os.path.join(MODELS_DIR, self.model_name),
+                tqdm_class=QtTqdm,
             )
+            self.progress.emit(100)
             self.finished.emit(self.model_name)
         except Exception as e:
             self.error.emit(str(e))

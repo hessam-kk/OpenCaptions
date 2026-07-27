@@ -36,6 +36,7 @@ a = Analysis(
         'sphinx', 'docutils',
         'uvicorn', 'starlette', 'fastapi',
         'pygments', 'rich',
+        'transformers',
     ],
     noarchive=False,
 )
