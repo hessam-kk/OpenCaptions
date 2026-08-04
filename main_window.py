@@ -42,7 +42,6 @@ from model_manager import (
 )
 from streaming import OnlineASRProcessor
 from transcriber import FileTranscribeWorker, Transcriber
-from vad import make_vad
 
 try:
     import psutil
@@ -78,7 +77,6 @@ class WhisperWorker(QThread):
         self.ring = ring
         self.metrics = metrics
         self.processor = OnlineASRProcessor(transcriber, metrics=metrics)
-        self.vad: Optional[SileroVAD] = None
         self._stop_flag = threading.Event()
 
     def stop(self):
@@ -94,8 +92,8 @@ class WhisperWorker(QThread):
             # it arrives, and transcribe the whole queue each pass. Nothing is
             # dropped — the queue absorbs the lag (text appears late, not lost).
             while not self._stop_flag.is_set():
-                # Pull a batch of audio (accumulate until >= STEP_SEC so the
-                # VAD has a real window; capture delivers tiny 0.02s chunks).
+                # Pull a batch of audio (accumulate until >= STEP_SEC;
+                # capture delivers tiny 0.02s chunks).
                 batch = None
                 while not self._stop_flag.is_set():
                     audio = self.ring.take(self.MAX_BATCH_SECONDS, timeout=0.5)
@@ -114,15 +112,6 @@ class WhisperWorker(QThread):
                     self.metrics.set_ring_status(pending, dropped)
                 rms = float(np.sqrt(np.mean(batch ** 2)))
                 self.metrics.log(f"[worker] took {len(batch)/16000:.2f}s batch, rms={rms:.4f}")
-                self._maybe_init_vad()
-                if self.vad is not None:
-                    onset = self.vad.process(batch)
-                    self.metrics.log(f"[worker] VAD onset={onset} (rms={rms:.4f})")
-                    if onset < 0:
-                        # Silence: drop it without touching Whisper.
-                        if self.metrics:
-                            self.metrics.record_silence(len(batch) / 16000)
-                        continue
                 self.processor.insert_audio_chunk(batch)
                 # Run one pass on the whole queue, commit everything.
                 try:
@@ -136,15 +125,6 @@ class WhisperWorker(QThread):
                 self.result.emit((start, end, committed or "", tentative))
         finally:
             self.processor = None
-
-    def _maybe_init_vad(self):
-        if self.vad is None:
-            try:
-                self.vad = make_vad()
-                self.metrics.log(f"VAD loaded: {type(self.vad).__name__}")
-            except Exception as e:
-                self.metrics.log(f"VAD unavailable ({e}); running without VAD")
-                self.vad = None  # avoid retrying every pass
 
 
 class MainWindow(QMainWindow):
@@ -955,8 +935,6 @@ class DebugConsole(QWidget):
             ("Latency (ring pending)", f"{s['ring_pending_sec']:.2f} s"),
             ("Max ring pending", f"{s['max_ring_pending_sec']:.2f} s"),
             ("Ring dropped audio", f"{s['ring_dropped_sec']:.1f} s"),
-            ("VAD silence drained", f"{s['silence_drained']:.1f} s"),
-            ("VAD skips", str(s["silence_skips"])),
             ("Inference / pass", f"{s['inference_ms_avg']:.0f} ms"),
             ("Inference events", str(s["inference_events"])),
             ("RT factor", f"{s['inference_ms_avg'] / 1000 / max(s['audio_processed_sec'] / max(s['inference_events'], 1), 1e-9):.2f}x"),

@@ -265,22 +265,17 @@ class AudioCapture:
             self._pyaudio = None
 
     def _capture_loop(self, rate: int, channels: int) -> None:
-        """Background capture loop.
+        """Background capture loop (producer).
 
-        Uses a timeout on read() so a hung WASAPI loopback device (which can
-        block forever) is detected and the capture restarts on the next
-        available loopback device instead of stalling silently.
+        Reads audio in a dedicated thread and pushes chunks to the ring buffer.
+        pyaudiowpatch's read() is blocking (no timeout param) — the stream is
+        closed by stop() to unblock it.
         """
-        import pyaudiowpatch as pyaudio
-
         while self._running and self._stream:
             try:
                 t0 = time.perf_counter()
-                # timeout so a hung device doesn't block forever
-                data = self._stream.read(1024, exception_on_overflow=False, timeout=0.5)
+                data = self._stream.read(1024, exception_on_overflow=False)
                 read_sec = time.perf_counter() - t0
-                if len(data) == 0:
-                    continue
             except Exception:
                 break  # Stream closed or error — exit loop
             if not self._running:
