@@ -62,14 +62,17 @@ class OnlineASRProcessor:
         if self.metrics:
             self.metrics.record_inference(inference_sec, buffer_sec)
 
-        # Commit all NEW words this pass (skip words already committed — the
-        # overlap re-transcribes the same audio at shifted positions).
-        last_commit_start = self.commited[-1][0] if self.commited else -1.0
+        # Commit all words whose START is beyond the last committed END (i.e.
+        # genuinely new audio). Words re-transcribed in the overlap region have
+        # starts <= last committed end — skip those. This is robust to Whisper's
+        # timestamp drift because we compare against the END boundary, not the
+        # last word's start.
+        last_end = self.commited[-1][1] if self.commited else 0.0
         committed = []
         for a, b, t in words:
             abs_a = a + self.buffer_time_offset
             abs_b = b + self.buffer_time_offset
-            if abs_a <= last_commit_start + 0.05:
+            if abs_a <= last_end - 0.1:
                 continue  # already committed (overlap region)
             committed.append((abs_a, abs_b, t))
         self.commited.extend(committed)
@@ -95,19 +98,17 @@ class OnlineASRProcessor:
         return None, None, ""
 
     def _trim_buffer(self) -> None:
-        """Drop the front of the queue that's been transcribed, keep a small overlap.
+        """Drop only COMMITTED audio from the front of the queue.
 
-        Advances buffer_time_offset by the transcribed region (or a fixed step
-        if nothing was committed) so the queue stays bounded even when the
-        model hears no words. Keeps ~1s overlap for context continuity.
+        The queue keeps the uncommitted tail (which the next pass re-transcribes
+        — that's how new words get a chance to commit). Nothing is dropped when
+        nothing has committed, so the queue grows to absorb the lag.
         """
-        keep_sec = 1.0
-        if self.commited:
-            last_end = self.commited[-1][1]
-            cut_sec = max(0.0, last_end - self.buffer_time_offset - keep_sec)
-        else:
-            # Nothing committed: drop the transcribed window, keep a small tail.
-            cut_sec = max(0.0, len(self.audio_buffer) / SAMPLING_RATE - keep_sec)
+        if not self.commited:
+            return  # nothing committed — keep the whole queue
+        last_end = self.commited[-1][1]
+        keep_sec = 2.0  # overlap for context + re-transcription
+        cut_sec = max(0.0, last_end - self.buffer_time_offset - keep_sec)
         cut_samples = int(cut_sec * SAMPLING_RATE)
         if cut_samples >= len(self.audio_buffer):
             self.audio_buffer = np.array([], dtype=np.float32)
