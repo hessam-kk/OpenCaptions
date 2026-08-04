@@ -115,7 +115,7 @@ class OnlineASRProcessor:
         inference_sec = time.perf_counter() - t0
 
         if self.metrics:
-            self.metrics.record_inference(inference_sec, 0.0, len(self.audio_buffer) / SAMPLING_RATE)
+            self.metrics.record_inference(inference_sec, len(self.audio_buffer) / SAMPLING_RATE)
 
         self.transcript_buffer.insert(words, self.buffer_time_offset)
 
@@ -137,8 +137,7 @@ class OnlineASRProcessor:
                 f"infer {len(self.audio_buffer) / SAMPLING_RATE:5.1f}s audio -> "
                 f"{inference_sec * 1000:7.1f}ms ({rt:4.2f}x RT), "
                 f"committed {len(committed):2d} words, "
-                f"tentative {len(self.transcript_buffer.new):2d}, "
-                f"behind {self.metrics.queue_sec:.1f}s"
+                f"tentative {len(self.transcript_buffer.new):2d}"
             )
 
         if committed:

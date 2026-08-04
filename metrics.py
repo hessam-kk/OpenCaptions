@@ -17,31 +17,40 @@ class Metrics:
         self.audio_received = 0.0  # seconds of audio pushed by capture
         self.audio_processed = 0.0  # seconds of audio covered by completed inference passes
         self.chunk_samples = 0
-        self.queue_depth = 0  # processed audio secs still buffered (behind live)
-        self.max_queue_depth = 0.0
+        self.ring_pending = 0.0  # seconds of audio waiting in the ring buffer
+        self.ring_dropped = 0.0  # seconds of audio dropped due to ring overflow
+        self.max_ring_pending = 0.0
         self.skipped_drops = 0  # times _drop_old_audio discarded audio
         self._events = queue.Queue(maxsize=2000)
-        self._snapshot = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self._snapshot = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     def record_capture(self, duration: float, samples: int) -> None:
         with self._lock:
             self.capture_events += 1
             self.capture_duration += duration
             self.chunk_samples += samples
+            self.audio_received += samples / 16000
 
     def record_resample(self, duration: float) -> None:
         with self._lock:
             self.resample_events += 1
             self.resample_duration += duration
 
-    def record_inference(self, duration: float, audio_sec: float, processed_sec: float) -> None:
+    def record_inference(self, duration: float, processed_sec: float) -> None:
         with self._lock:
             self.inference_events += 1
             self.inference_duration += duration
-            self.audio_received += audio_sec
             self.audio_processed += processed_sec
-            self.queue_depth = max(0.0, self.audio_received - self.audio_processed)
-            self.max_queue_depth = max(self.max_queue_depth, self.queue_depth)
+
+    def record_ring_drop(self) -> None:
+        with self._lock:
+            self.ring_dropped += 1
+
+    def set_ring_status(self, pending: float, dropped_sec: float) -> None:
+        with self._lock:
+            self.ring_pending = pending
+            self.max_ring_pending = max(self.max_ring_pending, pending)
+            self.ring_dropped = dropped_sec
 
     def record_drop(self) -> None:
         with self._lock:
@@ -74,8 +83,9 @@ class Metrics:
                 self.inference_duration,
                 self.audio_received,
                 self.audio_processed,
-                self.queue_depth,
-                self.max_queue_depth,
+                self.ring_pending,
+                self.max_ring_pending,
+                self.ring_dropped,
                 self.skipped_drops,
             )
             self._snapshot = out
@@ -93,8 +103,9 @@ class Metrics:
                 "inference_events": self.inference_events,
                 "audio_received_sec": self.audio_received,
                 "audio_processed_sec": self.audio_processed,
-                "queue_sec": self.queue_depth,
-                "max_queue_sec": self.max_queue_depth,
+                "ring_pending_sec": self.ring_pending,
+                "max_ring_pending_sec": self.max_ring_pending,
+                "ring_dropped_sec": self.ring_dropped,
                 "skipped_drops": self.skipped_drops,
             }
 

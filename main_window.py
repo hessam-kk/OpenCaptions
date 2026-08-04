@@ -1,6 +1,7 @@
 """PySide6 main window — ties all modules together."""
 
 import os
+import threading
 from typing import Optional
 
 import numpy as np
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWidgets import QHeaderView
 
-from audio_capture import AudioCapture, list_loopback_devices, list_microphones
+from audio_capture import AudioCapture, AudioRingBuffer, list_loopback_devices, list_microphones
 from metrics import Metrics
 from model_manager import (
     MODELS,
@@ -61,22 +62,44 @@ THEMES = {
 }
 
 
-class LiveInferenceWorker(QThread):
-    """Run live transcription inference in a background thread."""
+class WhisperWorker(QThread):
+    """Dedicated live-transcription thread: consumes audio from the ring buffer
+    and runs inference as fast as data arrives, never blocking capture."""
+
     result = Signal(object)  # (start, end, committed_text, tentative_text)
 
-    def __init__(self, processor):
+    MAX_BATCH_SECONDS = 12.0
+
+    def __init__(self, transcriber, ring: AudioRingBuffer, metrics: Metrics):
         super().__init__()
-        self.processor = processor
+        self.transcriber = transcriber
+        self.ring = ring
+        self.metrics = metrics
+        self.processor = OnlineASRProcessor(transcriber, metrics=metrics)
+        self._stop_flag = threading.Event()
+
+    def stop(self):
+        self._stop_flag.set()
+        self.ring.close()
 
     def run(self):
         try:
-            start, end, committed = self.processor.process_iter()
-            tentative = self.processor.get_tentative()
-            self.result.emit((start, end, committed or "", tentative))
-        except Exception as e:
-            self.processor.metrics and self.processor.metrics.log(f"live worker error: {e}")
-            self.result.emit((None, None, "", ""))
+            while not self._stop_flag.is_set():
+                audio = self.ring.take(self.MAX_BATCH_SECONDS, timeout=0.5)
+                if audio is None:
+                    continue
+                if self.metrics:
+                    pending, dropped = self.ring.status()
+                    self.metrics.set_ring_status(pending, dropped)
+                try:
+                    start, end, committed = self.processor.process_iter()
+                except Exception as e:
+                    self.metrics.log(f"live worker error: {e}")
+                    continue
+                tentative = self.processor.get_tentative()
+                self.result.emit((start, end, committed or "", tentative))
+        finally:
+            self.processor = None
 
 
 class MainWindow(QMainWindow):
@@ -90,9 +113,8 @@ class MainWindow(QMainWindow):
         self.console = None
         self.metrics = Metrics()
         self._capture = AudioCapture(self.metrics)
-        self._online_processor: Optional[OnlineASRProcessor] = None
-        self._live_timer = QTimer()
-        self._live_timer.timeout.connect(self._live_tick)
+        self._ring: Optional[AudioRingBuffer] = None
+        self._live_worker: Optional[WhisperWorker] = None
         self._status_timer = QTimer()
         self._status_timer.timeout.connect(self._update_status_metrics)
         self._status_timer.start(1000)
@@ -101,8 +123,6 @@ class MainWindow(QMainWindow):
         self._theme: str = "dark"
         self._segments: list = []  # [(start, end, text), ...] for SRT export
         self._show_timestamps: bool = True
-        self._live_busy: bool = False
-        self._live_worker: Optional[LiveInferenceWorker] = None
 
         self.setAcceptDrops(True)
         self._build_ui()
@@ -562,7 +582,7 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Loading model...")
         try:
-            self._transcriber = Transcriber(model_name, MODELS_DIR, metrics=self.metrics)
+            self._transcriber = Transcriber(model_name, MODELS_DIR)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load model:\n{e}")
             self.statusBar().showMessage("Idle")
@@ -580,18 +600,17 @@ class MainWindow(QMainWindow):
             self._start_live_mode()
 
     def _stop(self):
-        self._live_timer.stop()
-        self._live_busy = False
         if self.metrics:
             self.metrics.log("capture stopped")
-        # Stop audio capture FIRST to prevent callbacks after processor is cleared
+        # Stop audio capture FIRST to prevent callbacks after ring is closed
         try:
             self._capture.stop()
         except Exception:
             pass
-        # Now clear processor so any pending worker results are ignored
-        self._online_processor = None
-        # Stop live worker - wait for it to finish since it only does one iteration
+        # Close the ring so the worker's take() wakes and exits
+        if self._ring:
+            self._ring.close()
+        # Stop the live worker - wait for it to finish its current pass
         if self._live_worker:
             try:
                 self._live_worker.result.disconnect()
@@ -601,9 +620,11 @@ class MainWindow(QMainWindow):
                 self._live_worker.finished.disconnect()
             except RuntimeError:
                 pass
+            self._live_worker.stop()
             if self._live_worker.isRunning():
-                self._live_worker.wait(2000)
+                self._live_worker.wait(5000)
             self._live_worker = None
+        self._ring = None
         # Stop file worker
         if self._file_worker:
             if self._file_worker.isRunning():
@@ -708,7 +729,10 @@ class MainWindow(QMainWindow):
             self._stop()
             return
 
-        self._online_processor = OnlineASRProcessor(self._transcriber, metrics=self.metrics)
+        self._ring = AudioRingBuffer(self.metrics)
+        self._live_worker = WhisperWorker(self._transcriber, self._ring, self.metrics)
+        self._live_worker.result.connect(self._on_live_result)
+        self._live_worker.finished.connect(self._on_live_worker_done)
         self._live_committed = ""
 
         self.statusBar().showMessage("Listening...")
@@ -722,23 +746,22 @@ class MainWindow(QMainWindow):
             self._stop()
             return
 
-        self._live_timer.start(1000)
+        self._live_worker.start()
 
     def _on_audio_chunk(self, chunk: np.ndarray):
-        if self._online_processor:
-            self._online_processor.insert_audio_chunk(chunk)
+        if self._ring:
+            self._ring.push(chunk)
 
     # ── Performance metrics ─────────────────────────────────────────────
     def _update_status_metrics(self):
         """Called every 1s: refresh latency/queue/cpu/rate labels, push log lines to the console."""
         s = self.metrics.snapshot()
-        infer_sec = s["inference_ms_avg"] / 1000
-        if infer_sec > 0:
-            self.latency_label.setText(f"behind {s['queue_sec']:.1f}s")
+        if s["ring_pending_sec"] > 0:
+            self.latency_label.setText(f"behind {s['ring_pending_sec']:.1f}s")
         else:
             self.latency_label.setText("behind —")
-        if s["queue_sec"] > 0:
-            self.queue_label.setText(f"queue {s['queue_sec']:.1f}s")
+        if s["ring_pending_sec"] > 0:
+            self.queue_label.setText(f"queue {s['ring_pending_sec']:.1f}s")
         else:
             self.queue_label.setText("queue —")
         if psutil:
@@ -756,27 +779,17 @@ class MainWindow(QMainWindow):
             self.metrics.log(
                 f"window {s['window_sec']:.0f}s | infer avg {s['inference_ms_avg']:.0f}ms "
                 f"({rt:.2f}x RT) | capture avg {s['capture_ms_avg']:.0f}ms | "
-                f"resample avg {s['resample_ms_avg']:.0f}ms | behind {s['queue_sec']:.1f}s "
-                f"| {s['capture_per_s']:.0f} ch/s | drops {s['skipped_drops']}"
+                f"resample avg {s['resample_ms_avg']:.0f}ms | behind {s['ring_pending_sec']:.1f}s "
+                f"| {s['capture_per_s']:.0f} ch/s | ring drops {s['ring_dropped_sec']:.1f}s"
             )
         self.console and self.console.drain_logs()
 
-    def _live_tick(self):
-        if not self._online_processor or self._live_busy:
-            return
-        self._live_busy = True
-        if self._live_worker is None:
-            self._live_worker = LiveInferenceWorker(self._online_processor)
-            self._live_worker.result.connect(self._on_live_result)
-            self._live_worker.finished.connect(self._on_live_worker_done)
-        self._live_worker.start()
-
     def _on_live_worker_done(self):
-        self._live_busy = False
+        pass
 
     @Slot(object)
     def _on_live_result(self, result):
-        if not self._online_processor:
+        if not self._live_worker:
             return
         start, end, committed, tentative = result
         if committed:
@@ -894,9 +907,9 @@ class DebugConsole(QWidget):
     def refresh(self):
         s = self.metrics.snapshot()
         rows = [
-            ("Latency (behind live)", f"{s['queue_sec']:.2f} s"),
-            ("Queue duration", f"{s['queue_sec']:.2f} s"),
-            ("Max queue", f"{s['max_queue_sec']:.2f} s"),
+            ("Latency (ring pending)", f"{s['ring_pending_sec']:.2f} s"),
+            ("Max ring pending", f"{s['max_ring_pending_sec']:.2f} s"),
+            ("Ring dropped audio", f"{s['ring_dropped_sec']:.1f} s"),
             ("Inference / pass", f"{s['inference_ms_avg']:.0f} ms"),
             ("Inference events", str(s["inference_events"])),
             ("RT factor", f"{s['inference_ms_avg'] / 1000 / max(s['audio_processed_sec'] / max(s['inference_events'], 1), 1e-9):.2f}x"),

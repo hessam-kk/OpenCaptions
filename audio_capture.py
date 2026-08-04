@@ -1,5 +1,6 @@
 """WASAPI loopback audio capture via pyaudiowpatch."""
 
+import queue
 import threading
 import time
 from typing import Callable, List, Optional, Tuple
@@ -10,6 +11,87 @@ from metrics import Metrics
 
 SAMPLING_RATE = 16000
 TARGET_CHANNELS = 1
+
+
+class AudioRingBuffer:
+    """Thread-safe bounded buffer of float32 mono PCM chunks.
+
+    Capture pushes; the Whisper worker waits for data and takes the oldest
+    audio. Overflow (Whisper slower than real-time) drops the oldest audio
+    rather than growing unboundedly — capture never blocks on inference.
+    """
+
+    MAX_SECONDS = 30.0
+
+    def __init__(self, metrics: Optional[Metrics] = None):
+        self.metrics = metrics
+        self._q = queue.Queue()
+        self._cond = threading.Condition()
+        self._pending = 0
+        self._dropped = 0
+        self._closed = False
+
+    def push(self, chunk: np.ndarray) -> None:
+        with self._cond:
+            if self._closed:
+                return
+            self._pending += len(chunk) / SAMPLING_RATE
+            while self._pending > self.MAX_SECONDS and not self._q.empty():
+                old = self._q.get_nowait()
+                self._pending -= len(old) / SAMPLING_RATE
+                self._dropped += 1
+                if self.metrics:
+                    self.metrics.record_ring_drop()
+            self._q.put_nowait(chunk)
+            self._cond.notify()
+
+    def take(self, max_seconds: float, timeout: float = 0.5) -> Optional[np.ndarray]:
+        """Block up to `timeout` for audio; return up to `max_seconds` of the oldest audio."""
+        with self._cond:
+            if self._pending < 1e-3:
+                self._cond.wait(timeout)
+            if self._pending < 1e-3:
+                return None
+            out = []
+            budget = max_seconds * SAMPLING_RATE
+            while self._pending > 0 and budget > 0 and not self._q.empty():
+                chunk = self._q.get_nowait()
+                self._pending -= len(chunk) / SAMPLING_RATE
+                budget -= len(chunk)
+                out.append(chunk)
+            return np.concatenate(out).astype(np.float32) if out else None
+
+    def status(self) -> Tuple[float, int]:
+        """Return (pending audio seconds, cumulative dropped seconds)."""
+        with self._cond:
+            return self._pending, self._dropped
+
+    def close(self) -> None:
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
+
+
+if __name__ == "__main__":
+    # Self-check: push + take round-trips exactly; overflow drops oldest.
+    ring = AudioRingBuffer()
+    rng = np.random.default_rng(0)
+    total = 0.0
+    for _ in range(100):
+        chunk = rng.standard_normal(1024).astype(np.float32)
+        ring.push(chunk)
+        total += len(chunk) / SAMPLING_RATE
+    got = ring.take(60.0)
+    assert got is not None and abs(len(got) / SAMPLING_RATE - total) < 0.01, "round-trip lost audio"
+    big = np.zeros(1024, dtype=np.float32)
+    for _ in range(1000):
+        ring.push(big)
+    pending, dropped = ring.status()
+    assert pending <= ring.MAX_SECONDS + 0.01, "buffer exceeded cap"
+    assert dropped > 0, "overflow should drop"
+    assert ring.take(60.0) is not None
+    ring.close()
+    print("ring buffer self-check OK")
 
 
 def list_loopback_devices() -> List[Tuple[int, str]]:
