@@ -75,47 +75,52 @@ class HypothesisBuffer:
 
 
 class OnlineASRProcessor:
-    """Online ASR processor with local agreement streaming."""
+    """Online ASR processor with streaming chunking.
 
-    def __init__(self, transcriber, buffer_trimming_sec: float = 8.0, metrics: Optional[Metrics] = None):
+    Transcribes a head-anchored ~1s window: inference runs on the first 1.0s of
+    the buffer (once >= 0.5s has arrived, so passes fire roughly every 0.5s).
+    After each pass the buffer is trimmed up to the commit point, so the next
+    window overlaps only the uncommitted tail — the local-agreement merge.
+    """
+
+    WINDOW_SEC = 1.0      # max audio transcribed per pass (step + overlap)
+    STEP_SEC = 0.5        # target cadence between passes
+
+    def __init__(self, transcriber, metrics: Optional[Metrics] = None):
         """
         Args:
             transcriber: A Transcriber instance with .transcribe_buffer()
-            buffer_trimming_sec: Keep this many seconds of audio in the buffer.
             metrics: Optional Metrics collector for latency accounting and logging.
         """
         self.transcriber = transcriber
-        self.buffer_trimming_sec = buffer_trimming_sec
         self.metrics = metrics
         self.audio_buffer = np.array([], dtype=np.float32)
         self.buffer_time_offset: float = 0
         self.transcript_buffer = HypothesisBuffer()
         self.commited: List[Tuple[float, float, str]] = []
-        self._total_audio_time: float = 0  # track real-time audio position
 
     def insert_audio_chunk(self, audio: np.ndarray) -> None:
         """Append a new audio chunk to the buffer."""
         self.audio_buffer = np.append(self.audio_buffer, audio)
-        self._total_audio_time += len(audio) / SAMPLING_RATE
 
     def process_iter(self) -> Tuple[Optional[str], Optional[str], str]:
-        """Run inference and return (start, end, committed_text) or (None, None, '').
-        Also returns tentative text as a second element for display.
+        """Run inference on the head of the buffer and return (start, end, committed_text)
+        or (None, None, ''). Also returns tentative text as a second element for display.
         """
-        # If buffer is too large (falling behind), drop old audio aggressively
+        # Wait until at least STEP_SEC of audio has arrived before running
         buffer_sec = len(self.audio_buffer) / SAMPLING_RATE
-        if buffer_sec > self.buffer_trimming_sec * 2:
-            self._drop_old_audio()
+        if buffer_sec < self.STEP_SEC:
+            return None, None, ""
 
         prompt = self._make_prompt()
         t0 = time.perf_counter()
         words = self.transcriber.transcribe_buffer(
-            self.audio_buffer, initial_prompt=prompt
+            self.audio_buffer[: int(self.WINDOW_SEC * SAMPLING_RATE)], initial_prompt=prompt
         )
         inference_sec = time.perf_counter() - t0
 
         if self.metrics:
-            self.metrics.record_inference(inference_sec, len(self.audio_buffer) / SAMPLING_RATE)
+            self.metrics.record_inference(inference_sec, min(buffer_sec, self.WINDOW_SEC))
 
         self.transcript_buffer.insert(words, self.buffer_time_offset)
 
@@ -132,9 +137,9 @@ class OnlineASRProcessor:
         self._trim_buffer()
 
         if self.metrics:
-            rt = inference_sec / max(len(self.audio_buffer) / SAMPLING_RATE, 1e-9)
+            rt = inference_sec / max(min(buffer_sec, self.WINDOW_SEC), 1e-9)
             self.metrics.log(
-                f"infer {len(self.audio_buffer) / SAMPLING_RATE:5.1f}s audio -> "
+                f"infer {min(buffer_sec, self.WINDOW_SEC):5.1f}s audio -> "
                 f"{inference_sec * 1000:7.1f}ms ({rt:4.2f}x RT), "
                 f"committed {len(committed):2d} words, "
                 f"tentative {len(self.transcript_buffer.new):2d}"
@@ -176,45 +181,34 @@ class OnlineASRProcessor:
         return " ".join(reversed(result))
 
     def _trim_buffer(self) -> None:
-        """Trim audio and transcript buffers to keep size bounded."""
-        if len(self.audio_buffer) / SAMPLING_RATE <= self.buffer_trimming_sec:
-            return
-        # Find trim point: the latest segment boundary
+        """Trim the audio buffer: drop committed audio, keep the uncommitted tail.
+
+        The cut point is the last committed word's end time, so the tail that
+        remains overlaps the next window — no words are lost at the boundary.
+        """
         all_words = self.transcript_buffer.commited_in_buffer
-        if not all_words:
-            # Fallback: just cut to buffer_trimming_sec
-            cut_time = self.buffer_time_offset + self.buffer_trimming_sec
-        else:
-            # Use the second-to-last committed word's end time
-            cut_time = all_words[-1][1] if len(all_words) >= 2 else all_words[0][1]
+        cut_time = None
+        if len(all_words) >= 2:
+            cut_time = all_words[-1][1]
+        elif all_words:
+            cut_time = all_words[0][1]
 
-        if cut_time <= self.buffer_time_offset:
-            return
+        if cut_time is not None and cut_time > self.buffer_time_offset:
+            cut_seconds = cut_time - self.buffer_time_offset
+            samples_to_keep = int(cut_seconds * SAMPLING_RATE)
+            if samples_to_keep < len(self.audio_buffer):
+                self.audio_buffer = self.audio_buffer[samples_to_keep:]
+                self.buffer_time_offset = cut_time
+                self.transcript_buffer.pop_commited(cut_time)
 
-        cut_seconds = cut_time - self.buffer_time_offset
-        samples_to_keep = int(cut_seconds * SAMPLING_RATE)
-        if samples_to_keep < len(self.audio_buffer):
-            self.audio_buffer = self.audio_buffer[samples_to_keep:]
-            self.buffer_time_offset = cut_time
-            self.transcript_buffer.pop_commited(cut_time)
-
-    def _drop_old_audio(self) -> None:
-        """Aggressively drop old audio when falling behind real-time."""
-        # Keep only the last 3 seconds of audio (reduced from 5 for lower latency)
-        if self.metrics:
-            self.metrics.record_drop()
-            self.metrics.log(f"DROPPED {len(self.audio_buffer) / SAMPLING_RATE:.1f}s of buffered audio (falling behind)")
-        max_samples = int(3 * SAMPLING_RATE)
+        # Hard cap the trailing audio: keep at most WINDOW + STEP of uncommitted audio
+        max_samples = int((self.WINDOW_SEC + self.STEP_SEC) * SAMPLING_RATE)
         if len(self.audio_buffer) > max_samples:
-            dropped_samples = len(self.audio_buffer) - max_samples
+            dropped = len(self.audio_buffer) - max_samples
             self.audio_buffer = self.audio_buffer[-max_samples:]
-            self.buffer_time_offset += dropped_samples / SAMPLING_RATE
-            # Clear committed words that are now outside the buffer
+            self.buffer_time_offset += dropped / SAMPLING_RATE
             self.transcript_buffer.pop_commited(self.buffer_time_offset)
             self.commited = [
                 (a, b, t) for a, b, t in self.commited
                 if b > self.buffer_time_offset
             ]
-            # Reset hypothesis buffer to avoid stale matches
-            self.transcript_buffer.buffer = []
-            self.transcript_buffer.new = []

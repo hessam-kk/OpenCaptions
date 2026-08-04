@@ -21,7 +21,7 @@ class AudioRingBuffer:
     rather than growing unboundedly — capture never blocks on inference.
     """
 
-    MAX_SECONDS = 30.0
+    MAX_SECONDS = 10.0
 
     def __init__(self, metrics: Optional[Metrics] = None):
         self.metrics = metrics

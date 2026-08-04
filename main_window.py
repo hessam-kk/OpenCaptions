@@ -91,6 +91,7 @@ class WhisperWorker(QThread):
                 if self.metrics:
                     pending, dropped = self.ring.status()
                     self.metrics.set_ring_status(pending, dropped)
+                self.processor.insert_audio_chunk(audio)
                 try:
                     start, end, committed = self.processor.process_iter()
                 except Exception as e:
@@ -789,8 +790,6 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_live_result(self, result):
-        if not self._live_worker:
-            return
         start, end, committed, tentative = result
         if committed:
             self._live_committed += committed + " "

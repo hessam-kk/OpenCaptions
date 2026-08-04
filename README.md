@@ -63,7 +63,7 @@ python main.py
 ## Notes
 
 - Models are stored in `%LOCALAPPDATA%\OpenCaptionsApp\models` and detected from global HuggingFace cache
-- Live mode uses a rolling ~5-8 second audio buffer with aggressive trimming to prevent lag
+- Live mode transcribes a rolling 1-second window (~0.5s cadence) from a thread-safe ring buffer, with local agreement merging overlapping passes
 - Local-agreement requires 2 consecutive matching passes before text is committed
 - Loopback capture needs a WASAPI-compatible audio output device
 - Microphone mode uses standard WASAPI input devices
