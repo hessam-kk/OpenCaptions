@@ -90,29 +90,12 @@ class WhisperWorker(QThread):
             self.metrics.log(f"LIVE WORKER CRASH: {exc}")
         sys.excepthook = _log_unhandled
         try:
-            # Freeze the buffer until the current window commits: local agreement
-            # needs the SAME audio re-transcribed across passes. We only pull
-            # more audio when the buffer is empty (all committed/drained).
+            # Near-real-time: pull audio into the processor's queue as fast as
+            # it arrives, and transcribe the whole queue each pass. Nothing is
+            # dropped — the queue absorbs the lag (text appears late, not lost).
             while not self._stop_flag.is_set():
-                if len(self.processor.audio_buffer) / 16000 >= self.processor.STEP_SEC:
-                    # A window is in flight — run a pass WITHOUT new audio.
-                    self._maybe_init_vad()
-                    try:
-                        start, end, committed = self.processor.process_iter()
-                        self.metrics.log(f"[worker] pass done: committed={committed!r} buf={len(self.processor.audio_buffer)/16000:.2f}s")
-                        raw = self.processor.transcript_buffer.new
-                        self.metrics.log(f"[worker] raw words this pass: {len(raw)} {[(round(float(w[0]),2), w[2].strip()) for w in raw[:5]]}")
-                    except Exception as e:
-                        self.metrics.log(f"live worker error: {e}")
-                        continue
-                    tentative = self.processor.get_tentative()
-                    self.metrics.log(f"[worker] emitting result: committed={committed!r} tentative={tentative!r}")
-                    self.result.emit((start, end, committed or "", tentative))
-                    continue
-                # Accumulate audio until we have a meaningful batch (~0.5s).
-                # Capture delivers tiny chunks (e.g. 341 samples = 0.02s); the
-                # VAD needs >= 480 samples to detect anything, and Whisper needs
-                # a real window. So collect until STEP_SEC before VAD/inference.
+                # Pull a batch of audio (accumulate until >= STEP_SEC so the
+                # VAD has a real window; capture delivers tiny 0.02s chunks).
                 batch = None
                 while not self._stop_flag.is_set():
                     audio = self.ring.take(self.MAX_BATCH_SECONDS, timeout=0.5)
@@ -141,6 +124,16 @@ class WhisperWorker(QThread):
                             self.metrics.record_silence(len(batch) / 16000)
                         continue
                 self.processor.insert_audio_chunk(batch)
+                # Run one pass on the whole queue, commit everything.
+                try:
+                    start, end, committed = self.processor.process_iter()
+                    self.metrics.log(f"[worker] pass done: committed={committed!r} buf={len(self.processor.audio_buffer)/16000:.2f}s")
+                except Exception as e:
+                    self.metrics.log(f"live worker error: {e}")
+                    continue
+                tentative = self.processor.get_tentative()
+                self.metrics.log(f"[worker] emitting result: committed={committed!r} tentative={tentative!r}")
+                self.result.emit((start, end, committed or "", tentative))
         finally:
             self.processor = None
 

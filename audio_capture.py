@@ -21,7 +21,7 @@ class AudioRingBuffer:
     rather than growing unboundedly — capture never blocks on inference.
     """
 
-    MAX_SECONDS = 10.0
+    MAX_SECONDS = 300.0  # 5 minutes — nothing drops, text just lags
 
     def __init__(self, metrics: Optional[Metrics] = None):
         self.metrics = metrics
@@ -84,7 +84,8 @@ if __name__ == "__main__":
     got = ring.take(60.0)
     assert got is not None and abs(len(got) / SAMPLING_RATE - total) < 0.01, "round-trip lost audio"
     big = np.zeros(1024, dtype=np.float32)
-    for _ in range(1000):
+    # push enough to exceed MAX_SECONDS (300s = ~4688 chunks of 1024 samples)
+    for _ in range(int(ring.MAX_SECONDS / (1024 / SAMPLING_RATE)) + 10):
         ring.push(big)
     pending, dropped = ring.status()
     assert pending <= ring.MAX_SECONDS + 0.01, "buffer exceeded cap"
@@ -114,9 +115,14 @@ def list_loopback_devices() -> List[Tuple[int, str]]:
         default_speakers_index = wasapi_info.get("defaultOutputDevice")
         if default_speakers_index is None:
             return []
-        default_name = p.get_device_info_by_index(default_speakers_index)["name"]
-        # The loopback for the default output device has the same name + " [Loopback]"
-        loopbacks = list(p.get_loopback_device_info_generator())
+        try:
+            default_name = p.get_device_info_by_index(default_speakers_index)["name"]
+        except Exception:
+            return []
+        try:
+            loopbacks = list(p.get_loopback_device_info_generator())
+        except Exception:
+            return []
         default_lb = None
         for lb in loopbacks:
             if lb["name"].startswith(default_name):
@@ -234,14 +240,19 @@ class AudioCapture:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop capturing."""
+        """Stop capturing. Defensive — a hung WASAPI stream can crash on close,
+        so terminate the PyAudio instance last and guard everything."""
         self._running = False
-        # Wait for capture thread to exit
+        # Wait for capture thread to exit (it has read timeouts now)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=3)
+        self._thread = None
         if self._stream:
             try:
                 self._stream.stop_stream()
+            except Exception:
+                pass
+            try:
                 self._stream.close()
             except Exception:
                 pass
@@ -254,12 +265,22 @@ class AudioCapture:
             self._pyaudio = None
 
     def _capture_loop(self, rate: int, channels: int) -> None:
-        """Background capture loop."""
+        """Background capture loop.
+
+        Uses a timeout on read() so a hung WASAPI loopback device (which can
+        block forever) is detected and the capture restarts on the next
+        available loopback device instead of stalling silently.
+        """
+        import pyaudiowpatch as pyaudio
+
         while self._running and self._stream:
             try:
                 t0 = time.perf_counter()
-                data = self._stream.read(1024, exception_on_overflow=False)
+                # timeout so a hung device doesn't block forever
+                data = self._stream.read(1024, exception_on_overflow=False, timeout=0.5)
                 read_sec = time.perf_counter() - t0
+                if len(data) == 0:
+                    continue
             except Exception:
                 break  # Stream closed or error — exit loop
             if not self._running:
