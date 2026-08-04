@@ -1,4 +1,4 @@
-# Audiscribe
+# OpenCaptions
 
 A Python desktop app for real-time audio transcription on Windows, using OpenAI's Whisper models.
 
@@ -62,7 +62,7 @@ python main.py
 
 ## Notes
 
-- Models are stored in `%LOCALAPPDATA%\AudiscribeApp\models` and detected from global HuggingFace cache
+- Models are stored in `%LOCALAPPDATA%\OpenCaptionsApp\models` and detected from global HuggingFace cache
 - Live mode uses a rolling ~5-8 second audio buffer with aggressive trimming to prevent lag
 - Local-agreement requires 2 consecutive matching passes before text is committed
 - Loopback capture needs a WASAPI-compatible audio output device

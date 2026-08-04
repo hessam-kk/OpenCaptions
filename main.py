@@ -1,4 +1,4 @@
-"""Audiscribe — entry point."""
+"""OpenCaptions — entry point."""
 
 import os
 import sys

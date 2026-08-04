@@ -13,7 +13,7 @@ MODELS = {
 }
 
 MODELS_DIR = os.path.join(os.environ.get(
-    "LOCALAPPDATA", os.path.expanduser("~")), "AudiscribeApp", "models")
+    "LOCALAPPDATA", os.path.expanduser("~")), "OpenCaptionsApp", "models")
 
 
 def _all_model_dirs(model_name: str) -> list:
