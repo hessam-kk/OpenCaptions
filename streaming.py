@@ -4,9 +4,12 @@ Pure Python — no Qt dependencies. Testable independently.
 Based on the UFAL whisper_streaming approach.
 """
 
+import time
 from typing import List, Optional, Tuple
 
 import numpy as np
+
+from metrics import Metrics
 
 SAMPLING_RATE = 16000
 
@@ -74,14 +77,16 @@ class HypothesisBuffer:
 class OnlineASRProcessor:
     """Online ASR processor with local agreement streaming."""
 
-    def __init__(self, transcriber, buffer_trimming_sec: float = 8.0):
+    def __init__(self, transcriber, buffer_trimming_sec: float = 8.0, metrics: Optional[Metrics] = None):
         """
         Args:
             transcriber: A Transcriber instance with .transcribe_buffer()
             buffer_trimming_sec: Keep this many seconds of audio in the buffer.
+            metrics: Optional Metrics collector for latency accounting and logging.
         """
         self.transcriber = transcriber
         self.buffer_trimming_sec = buffer_trimming_sec
+        self.metrics = metrics
         self.audio_buffer = np.array([], dtype=np.float32)
         self.buffer_time_offset: float = 0
         self.transcript_buffer = HypothesisBuffer()
@@ -103,9 +108,15 @@ class OnlineASRProcessor:
             self._drop_old_audio()
 
         prompt = self._make_prompt()
+        t0 = time.perf_counter()
         words = self.transcriber.transcribe_buffer(
             self.audio_buffer, initial_prompt=prompt
         )
+        inference_sec = time.perf_counter() - t0
+
+        if self.metrics:
+            self.metrics.record_inference(inference_sec, 0.0, len(self.audio_buffer) / SAMPLING_RATE)
+
         self.transcript_buffer.insert(words, self.buffer_time_offset)
 
         committed = self.transcript_buffer.flush()
@@ -119,6 +130,16 @@ class OnlineASRProcessor:
 
         # Trim buffer
         self._trim_buffer()
+
+        if self.metrics:
+            rt = inference_sec / max(len(self.audio_buffer) / SAMPLING_RATE, 1e-9)
+            self.metrics.log(
+                f"infer {len(self.audio_buffer) / SAMPLING_RATE:5.1f}s audio -> "
+                f"{inference_sec * 1000:7.1f}ms ({rt:4.2f}x RT), "
+                f"committed {len(committed):2d} words, "
+                f"tentative {len(self.transcript_buffer.new):2d}, "
+                f"behind {self.metrics.queue_sec:.1f}s"
+            )
 
         if committed:
             start = committed[0][0]
@@ -181,6 +202,9 @@ class OnlineASRProcessor:
     def _drop_old_audio(self) -> None:
         """Aggressively drop old audio when falling behind real-time."""
         # Keep only the last 3 seconds of audio (reduced from 5 for lower latency)
+        if self.metrics:
+            self.metrics.record_drop()
+            self.metrics.log(f"DROPPED {len(self.audio_buffer) / SAMPLING_RATE:.1f}s of buffered audio (falling behind)")
         max_samples = int(3 * SAMPLING_RATE)
         if len(self.audio_buffer) > max_samples:
             dropped_samples = len(self.audio_buffer) - max_samples

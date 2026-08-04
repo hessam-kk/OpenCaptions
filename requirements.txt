@@ -4,3 +4,4 @@ pyside6
 numpy
 requests
 huggingface-hub>=1.5.0,<2.0
+psutil

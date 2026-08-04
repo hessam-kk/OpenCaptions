@@ -1,9 +1,12 @@
 """WASAPI loopback audio capture via pyaudiowpatch."""
 
 import threading
+import time
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
+
+from metrics import Metrics
 
 SAMPLING_RATE = 16000
 TARGET_CHANNELS = 1
@@ -75,12 +78,13 @@ def stereo_to_mono(audio: np.ndarray, channels: int) -> np.ndarray:
 class AudioCapture:
     """Captures system audio via WASAPI loopback."""
 
-    def __init__(self):
+    def __init__(self, metrics: Optional[Metrics] = None):
         self._pyaudio = None
         self._stream = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._callback: Optional[Callable[[np.ndarray], None]] = None
+        self.metrics = metrics
 
     def start(self, device_index: int, callback: Callable[[np.ndarray], None]) -> None:
         """Start capturing from a loopback device. Calls callback with float32 16kHz mono chunks."""
@@ -156,14 +160,21 @@ class AudioCapture:
         """Background capture loop."""
         while self._running and self._stream:
             try:
+                t0 = time.perf_counter()
                 data = self._stream.read(1024, exception_on_overflow=False)
+                read_sec = time.perf_counter() - t0
             except Exception:
                 break  # Stream closed or error — exit loop
             if not self._running:
                 break
             audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            t1 = time.perf_counter()
             audio_np = stereo_to_mono(audio_np, channels)
             audio_np = resample_to_16k(audio_np, rate)
+            resample_sec = time.perf_counter() - t1
+            if self.metrics:
+                self.metrics.record_capture(read_sec, len(audio_np))
+                self.metrics.record_resample(resample_sec)
             if self._callback and self._running:
                 try:
                     self._callback(audio_np)

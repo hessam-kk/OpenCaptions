@@ -1,19 +1,23 @@
 """Whisper transcription wrapper — file and raw buffer modes."""
 
+import time
 from typing import Generator, List, Optional, Tuple
 
 import numpy as np
 from faster_whisper import WhisperModel
 from PySide6.QtCore import QThread, Signal
 
+from metrics import Metrics
+
 
 class Transcriber:
     """Wraps faster-whisper for both file and raw audio buffer transcription."""
 
-    def __init__(self, model_size: str, models_dir: str):
+    def __init__(self, model_size: str, models_dir: str, metrics: Optional[Metrics] = None):
         self.model = WhisperModel(
             model_size, device="cpu", compute_type="int8", download_root=models_dir
         )
+        self.metrics = metrics
 
     def transcribe_file(
         self, audio_path: str, language: str = "en"
@@ -33,6 +37,7 @@ class Transcriber:
         initial_prompt: Optional[str] = None,
     ) -> List[Tuple[float, float, str]]:
         """Transcribe a raw float32 16kHz mono buffer. Returns [(start, end, word), ...]."""
+        t0 = time.perf_counter()
         segments, _ = self.model.transcribe(
             audio,
             language=language,
@@ -46,6 +51,8 @@ class Transcriber:
             if seg.words:
                 for w in seg.words:
                     words.append((w.start, w.end, w.word))
+        if self.metrics:
+            self.metrics.record_inference(time.perf_counter() - t0, len(audio) / 16000, 0.0)
         return words
 
 

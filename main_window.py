@@ -20,12 +20,16 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtWidgets import QHeaderView
 
 from audio_capture import AudioCapture, list_loopback_devices, list_microphones
+from metrics import Metrics
 from model_manager import (
     MODELS,
     MODELS_DIR,
@@ -36,6 +40,11 @@ from model_manager import (
 )
 from streaming import OnlineASRProcessor
 from transcriber import FileTranscribeWorker, Transcriber
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # ── Themes ──────────────────────────────────────────────────────────────
 THEMES = {
@@ -65,7 +74,8 @@ class LiveInferenceWorker(QThread):
             start, end, committed = self.processor.process_iter()
             tentative = self.processor.get_tentative()
             self.result.emit((start, end, committed or "", tentative))
-        except Exception:
+        except Exception as e:
+            self.processor.metrics and self.processor.metrics.log(f"live worker error: {e}")
             self.result.emit((None, None, "", ""))
 
 
@@ -77,10 +87,15 @@ class MainWindow(QMainWindow):
 
         self._transcriber: Optional[Transcriber] = None
         self._file_worker: Optional[FileTranscribeWorker] = None
-        self._capture = AudioCapture()
+        self.console = None
+        self.metrics = Metrics()
+        self._capture = AudioCapture(self.metrics)
         self._online_processor: Optional[OnlineASRProcessor] = None
         self._live_timer = QTimer()
         self._live_timer.timeout.connect(self._live_tick)
+        self._status_timer = QTimer()
+        self._status_timer.timeout.connect(self._update_status_metrics)
+        self._status_timer.start(1000)
         self._selected_file: Optional[str] = None
         self._selected_model: str = list(MODELS.keys())[0]
         self._theme: str = "dark"
@@ -128,6 +143,13 @@ class MainWindow(QMainWindow):
         self.start_btn.setStyleSheet("QPushButton { padding: 6px 20px; font-weight: bold; }")
         self.start_btn.clicked.connect(self._on_start_stop)
         toolbar.addWidget(self.start_btn)
+
+        self.debug_btn = QPushButton("\U0001f4ca")  # 📊
+        self.debug_btn.setFixedSize(32, 32)
+        self.debug_btn.setToolTip("Toggle debug console")
+        self.debug_btn.setCheckable(True)
+        self.debug_btn.clicked.connect(self._toggle_console)
+        toolbar.addWidget(self.debug_btn)
 
         self.theme_btn = QPushButton("\u263e")  # ☾
         self.theme_btn.setFixedSize(32, 32)
@@ -305,6 +327,24 @@ class MainWindow(QMainWindow):
         self.trans_progress_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
         layout.addWidget(self.trans_progress_label)
 
+        # Metrics bar (latency / queue / CPU / rate)
+        self.metrics_bar = QHBoxLayout()
+        self.metrics_bar.setSpacing(16)
+        self.metrics_bar.addStretch()
+        self.latency_label = QLabel("behind —")
+        self.latency_label.setStyleSheet("color: #a6adc8; font-size: 11px; font-family: Consolas;")
+        self.metrics_bar.addWidget(self.latency_label)
+        self.queue_label = QLabel("queue —")
+        self.queue_label.setStyleSheet("color: #a6adc8; font-size: 11px; font-family: Consolas;")
+        self.metrics_bar.addWidget(self.queue_label)
+        self.cpu_label = QLabel("cpu —")
+        self.cpu_label.setStyleSheet("color: #a6adc8; font-size: 11px; font-family: Consolas;")
+        self.metrics_bar.addWidget(self.cpu_label)
+        self.rate_label = QLabel("rate —")
+        self.rate_label.setStyleSheet("color: #a6adc8; font-size: 11px; font-family: Consolas;")
+        self.metrics_bar.addWidget(self.rate_label)
+        layout.addLayout(self.metrics_bar)
+
         # Status bar
         self.statusBar().showMessage("Idle")
         self.statusBar().setStyleSheet("QStatusBar { color: #a6adc8; }")
@@ -312,6 +352,15 @@ class MainWindow(QMainWindow):
         self._credit_label.setOpenExternalLinks(True)
         self._credit_label.setStyleSheet("font-size: 10px; color: #a6adc8; padding-right: 4px;")
         self.statusBar().addPermanentWidget(self._credit_label)
+
+    # ── Debug console ───────────────────────────────────────────────────
+    def _toggle_console(self):
+        if self.console is None:
+            self.console = DebugConsole(self.metrics)
+        if self.console.isVisible():
+            self.console.hide()
+        else:
+            self.console.show()
 
     # ── Theme ────────────────────────────────────────────────────────────
     def _toggle_theme(self):
@@ -513,7 +562,7 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Loading model...")
         try:
-            self._transcriber = Transcriber(model_name, MODELS_DIR)
+            self._transcriber = Transcriber(model_name, MODELS_DIR, metrics=self.metrics)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load model:\n{e}")
             self.statusBar().showMessage("Idle")
@@ -533,6 +582,8 @@ class MainWindow(QMainWindow):
     def _stop(self):
         self._live_timer.stop()
         self._live_busy = False
+        if self.metrics:
+            self.metrics.log("capture stopped")
         # Stop audio capture FIRST to prevent callbacks after processor is cleared
         try:
             self._capture.stop()
@@ -657,7 +708,7 @@ class MainWindow(QMainWindow):
             self._stop()
             return
 
-        self._online_processor = OnlineASRProcessor(self._transcriber)
+        self._online_processor = OnlineASRProcessor(self._transcriber, metrics=self.metrics)
         self._live_committed = ""
 
         self.statusBar().showMessage("Listening...")
@@ -676,6 +727,39 @@ class MainWindow(QMainWindow):
     def _on_audio_chunk(self, chunk: np.ndarray):
         if self._online_processor:
             self._online_processor.insert_audio_chunk(chunk)
+
+    # ── Performance metrics ─────────────────────────────────────────────
+    def _update_status_metrics(self):
+        """Called every 1s: refresh latency/queue/cpu/rate labels, push log lines to the console."""
+        s = self.metrics.snapshot()
+        infer_sec = s["inference_ms_avg"] / 1000
+        if infer_sec > 0:
+            self.latency_label.setText(f"behind {s['queue_sec']:.1f}s")
+        else:
+            self.latency_label.setText("behind —")
+        if s["queue_sec"] > 0:
+            self.queue_label.setText(f"queue {s['queue_sec']:.1f}s")
+        else:
+            self.queue_label.setText("queue —")
+        if psutil:
+            self.cpu_label.setText(f"cpu {psutil.cpu_percent():.0f}%")
+        else:
+            self.cpu_label.setText("cpu —")
+        if s["capture_per_s"] > 0:
+            self.rate_label.setText(f"rate {s['capture_per_s']:.0f} ch/s")
+        else:
+            self.rate_label.setText("rate —")
+        if s["inference_events"] > 0 and s["inference_ms_avg"] > 0:
+            rt = s["inference_ms_avg"] / 1000 / max(
+                s["audio_processed_sec"] / max(s["inference_events"], 1), 1e-9
+            )
+            self.metrics.log(
+                f"window {s['window_sec']:.0f}s | infer avg {s['inference_ms_avg']:.0f}ms "
+                f"({rt:.2f}x RT) | capture avg {s['capture_ms_avg']:.0f}ms | "
+                f"resample avg {s['resample_ms_avg']:.0f}ms | behind {s['queue_sec']:.1f}s "
+                f"| {s['capture_per_s']:.0f} ch/s | drops {s['skipped_drops']}"
+            )
+        self.console and self.console.drain_logs()
 
     def _live_tick(self):
         if not self._online_processor or self._live_busy:
@@ -776,3 +860,62 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._stop()
         event.accept()
+
+
+# ── Debug console ──────────────────────────────────────────────────────
+class DebugConsole(QWidget):
+    """Live performance readout + rolling log of inference passes."""
+
+    def __init__(self, metrics: Metrics):
+        super().__init__()
+        self.metrics = metrics
+        self.setWindowTitle("Debug Console")
+        self.resize(760, 480)
+
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        layout.addWidget(self.table, 1)
+
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setFont(QFont("Consolas", 9))
+        self.log.setMaximumHeight(240)
+        layout.addWidget(self.log, 1)
+
+        self._timer = QTimer()
+        self._timer.timeout.connect(self.refresh)
+        self._timer.start(1000)
+
+    def refresh(self):
+        s = self.metrics.snapshot()
+        rows = [
+            ("Latency (behind live)", f"{s['queue_sec']:.2f} s"),
+            ("Queue duration", f"{s['queue_sec']:.2f} s"),
+            ("Max queue", f"{s['max_queue_sec']:.2f} s"),
+            ("Inference / pass", f"{s['inference_ms_avg']:.0f} ms"),
+            ("Inference events", str(s["inference_events"])),
+            ("RT factor", f"{s['inference_ms_avg'] / 1000 / max(s['audio_processed_sec'] / max(s['inference_events'], 1), 1e-9):.2f}x"),
+            ("Capture / chunk", f"{s['capture_ms_avg']:.1f} ms"),
+            ("Resample / chunk", f"{s['resample_ms_avg']:.1f} ms"),
+            ("Chunks processed / s", f"{s['capture_per_s']:.0f}"),
+            ("Audio received", f"{s['audio_received_sec']:.1f} s"),
+            ("Audio processed", f"{s['audio_processed_sec']:.1f} s"),
+            ("CPU (process)", f"{psutil.Process().cpu_percent():.0f}%" if psutil else "n/a"),
+            ("Skipped drops", str(s["skipped_drops"])),
+        ]
+        self.table.setRowCount(len(rows))
+        for r, (k, v) in enumerate(rows):
+            self.table.setItem(r, 0, QTableWidgetItem(k))
+            self.table.setItem(r, 1, QTableWidgetItem(v))
+        self.drain_logs()
+
+    def drain_logs(self):
+        for ts, msg in self.metrics.drain_log():
+            self.log.append(f"[{self.metrics.format_ts(ts)}] {msg}")
+            if self.log.document().blockCount() > 2000:
+                self.log.clear()
