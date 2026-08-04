@@ -95,7 +95,12 @@ if __name__ == "__main__":
 
 
 def list_loopback_devices() -> List[Tuple[int, str]]:
-    """Return list of (device_index, device_name) for WASAPI loopback devices."""
+    """Return list of (device_index, device_name) for WASAPI loopback devices.
+
+    The loopback device matching the system's DEFAULT OUTPUT is listed FIRST
+    (it's the one that actually captures what the user hears). Virtual devices
+    (FxSound, etc.) may enumerate first but deliver silence.
+    """
     try:
         import pyaudiowpatch as pyaudio
     except ImportError:
@@ -109,9 +114,19 @@ def list_loopback_devices() -> List[Tuple[int, str]]:
         default_speakers_index = wasapi_info.get("defaultOutputDevice")
         if default_speakers_index is None:
             return []
-        default_speakers = p.get_device_info_by_index(default_speakers_index)
-        for loopback in p.get_loopback_device_info_generator():
-            devices.append((loopback["index"], loopback["name"]))
+        default_name = p.get_device_info_by_index(default_speakers_index)["name"]
+        # The loopback for the default output device has the same name + " [Loopback]"
+        loopbacks = list(p.get_loopback_device_info_generator())
+        default_lb = None
+        for lb in loopbacks:
+            if lb["name"].startswith(default_name):
+                default_lb = lb
+                break
+        if default_lb is not None:
+            devices.append((default_lb["index"], default_lb["name"]))
+        for lb in loopbacks:
+            if lb["index"] != (default_lb["index"] if default_lb else -1):
+                devices.append((lb["index"], lb["name"]))
     return devices
 
 

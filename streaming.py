@@ -44,13 +44,17 @@ class HypothesisBuffer:
                         break
 
     def flush(self) -> List[Tuple[float, float, str]]:
-        """Return committed words (longest common prefix of last 2 passes)."""
+        """Return committed words (longest common prefix of last 2 passes).
+
+        Words are compared by normalized text (lowercase, stripped) so Whisper's
+        nondeterministic casing/punctuation between passes doesn't block commits.
+        """
         commit = []
         while self.new:
             na, nb, nt = self.new[0]
             if not self.buffer:
                 break
-            if nt == self.buffer[0][2]:
+            if self._norm(nt) == self._norm(self.buffer[0][2]):
                 commit.append((na, nb, nt))
                 self.last_commited_word = nt
                 self.last_commited_time = nb
@@ -62,6 +66,10 @@ class HypothesisBuffer:
         self.new = []
         self.commited_in_buffer.extend(commit)
         return commit
+
+    @staticmethod
+    def _norm(w: str) -> str:
+        return w.strip().strip(".,!?;:'\"()[] ").lower()
 
     def complete(self) -> List[Tuple[float, float, str]]:
         """Return all words (committed + tentative)."""
@@ -83,8 +91,9 @@ class OnlineASRProcessor:
     window overlaps only the uncommitted tail — the local-agreement merge.
     """
 
-    WINDOW_SEC = 1.0      # max audio transcribed per pass (step + overlap)
-    STEP_SEC = 0.5        # target cadence between passes
+    WINDOW_SEC = 1.0      # max audio transcribed per pass
+    STEP_SEC = 1.0        # min audio before first pass (full window)
+    MAX_BUFFER_SEC = 1.0  # cap the buffer so the window is stable between passes
 
     def __init__(self, transcriber, metrics: Optional[Metrics] = None):
         """
@@ -100,12 +109,37 @@ class OnlineASRProcessor:
         self.commited: List[Tuple[float, float, str]] = []
 
     def insert_audio_chunk(self, audio: np.ndarray) -> None:
-        """Append a new audio chunk to the buffer."""
-        self.audio_buffer = np.append(self.audio_buffer, audio)
+        """Append a new audio chunk to the buffer, capped at MAX_BUFFER_SEC.
+
+        Freezes the buffer once it reaches MAX_BUFFER_SEC — the window stays
+        stable between passes, which is what makes local agreement work.
+        Uses np.concatenate (not np.append) — faster-whisper returns no words
+        for arrays built by repeated np.append (silent memory-layout issue).
+        """
+        self.audio_buffer = np.concatenate([self.audio_buffer, audio])
+        max_samples = int(self.MAX_BUFFER_SEC * SAMPLING_RATE)
+        if len(self.audio_buffer) > max_samples:
+            self.audio_buffer = self.audio_buffer[-max_samples:]
+            self.buffer_time_offset += (len(self.audio_buffer) - max_samples) / SAMPLING_RATE
+
+    def drain_buffered(self, n: int) -> None:
+        """Discard n samples that VAD classified as silence (no Whisper pass)."""
+        if n >= len(self.audio_buffer):
+            self.audio_buffer = np.array([], dtype=np.float32)
+            self.buffer_time_offset += n / SAMPLING_RATE
+        else:
+            self.audio_buffer = self.audio_buffer[n:]
+            self.buffer_time_offset += n / SAMPLING_RATE
 
     def process_iter(self) -> Tuple[Optional[str], Optional[str], str]:
-        """Run inference on the head of the buffer and return (start, end, committed_text)
+        """Run inference on the buffer and return (start, end, committed_text)
         or (None, None, ''). Also returns tentative text as a second element for display.
+
+        Transcribes the WHOLE buffer each pass (not a sliding window), so the
+        same audio is re-transcribed until its words agree across 2 consecutive
+        passes and are committed. Only then is the buffer trimmed past them.
+        This is the core of the local-agreement algorithm — re-transcribing the
+        same content until it's stable.
         """
         # Wait until at least STEP_SEC of audio has arrived before running
         buffer_sec = len(self.audio_buffer) / SAMPLING_RATE
@@ -115,12 +149,12 @@ class OnlineASRProcessor:
         prompt = self._make_prompt()
         t0 = time.perf_counter()
         words = self.transcriber.transcribe_buffer(
-            self.audio_buffer[: int(self.WINDOW_SEC * SAMPLING_RATE)], initial_prompt=prompt
+            self.audio_buffer, initial_prompt=prompt or None
         )
         inference_sec = time.perf_counter() - t0
 
         if self.metrics:
-            self.metrics.record_inference(inference_sec, min(buffer_sec, self.WINDOW_SEC))
+            self.metrics.record_inference(inference_sec, buffer_sec)
 
         self.transcript_buffer.insert(words, self.buffer_time_offset)
 
@@ -133,13 +167,13 @@ class OnlineASRProcessor:
         all_words = self.transcript_buffer.complete()
         tentative_text = " ".join(t for _, _, t in all_words) if all_words else ""
 
-        # Trim buffer
+        # Trim buffer: drop committed audio so the window advances.
         self._trim_buffer()
 
         if self.metrics:
-            rt = inference_sec / max(min(buffer_sec, self.WINDOW_SEC), 1e-9)
+            rt = inference_sec / max(buffer_sec, 1e-9)
             self.metrics.log(
-                f"infer {min(buffer_sec, self.WINDOW_SEC):5.1f}s audio -> "
+                f"infer {buffer_sec:5.1f}s audio -> "
                 f"{inference_sec * 1000:7.1f}ms ({rt:4.2f}x RT), "
                 f"committed {len(committed):2d} words, "
                 f"tentative {len(self.transcript_buffer.new):2d}"
@@ -185,6 +219,8 @@ class OnlineASRProcessor:
 
         The cut point is the last committed word's end time, so the tail that
         remains overlaps the next window — no words are lost at the boundary.
+        The uncommitted tail keeps being re-transcribed, which is the overlap
+        that makes local agreement work.
         """
         all_words = self.transcript_buffer.commited_in_buffer
         cut_time = None
@@ -200,15 +236,3 @@ class OnlineASRProcessor:
                 self.audio_buffer = self.audio_buffer[samples_to_keep:]
                 self.buffer_time_offset = cut_time
                 self.transcript_buffer.pop_commited(cut_time)
-
-        # Hard cap the trailing audio: keep at most WINDOW + STEP of uncommitted audio
-        max_samples = int((self.WINDOW_SEC + self.STEP_SEC) * SAMPLING_RATE)
-        if len(self.audio_buffer) > max_samples:
-            dropped = len(self.audio_buffer) - max_samples
-            self.audio_buffer = self.audio_buffer[-max_samples:]
-            self.buffer_time_offset += dropped / SAMPLING_RATE
-            self.transcript_buffer.pop_commited(self.buffer_time_offset)
-            self.commited = [
-                (a, b, t) for a, b, t in self.commited
-                if b > self.buffer_time_offset
-            ]

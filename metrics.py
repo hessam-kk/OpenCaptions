@@ -20,6 +20,8 @@ class Metrics:
         self.ring_pending = 0.0  # seconds of audio waiting in the ring buffer
         self.ring_dropped = 0.0  # seconds of audio dropped due to ring overflow
         self.max_ring_pending = 0.0
+        self.silence_drained = 0.0  # seconds of audio skipped by VAD (silence)
+        self.silence_skips = 0  # passes skipped by VAD
         self.skipped_drops = 0  # times _drop_old_audio discarded audio
         self._events = queue.Queue(maxsize=2000)
         self._snapshot = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -51,6 +53,11 @@ class Metrics:
             self.ring_pending = pending
             self.max_ring_pending = max(self.max_ring_pending, pending)
             self.ring_dropped = dropped_sec
+
+    def record_silence(self, sec: float) -> None:
+        with self._lock:
+            self.silence_drained += sec
+            self.silence_skips += 1
 
     def record_drop(self) -> None:
         with self._lock:
@@ -87,6 +94,8 @@ class Metrics:
                 self.max_ring_pending,
                 self.ring_dropped,
                 self.skipped_drops,
+                self.silence_drained,
+                self.silence_skips,
             )
             self._snapshot = out
             return {
@@ -107,6 +116,8 @@ class Metrics:
                 "max_ring_pending_sec": self.max_ring_pending,
                 "ring_dropped_sec": self.ring_dropped,
                 "skipped_drops": self.skipped_drops,
+                "silence_drained": self.silence_drained,
+                "silence_skips": self.silence_skips,
             }
 
     def drain_log(self, n: int = 200):

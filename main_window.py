@@ -1,6 +1,7 @@
 """PySide6 main window — ties all modules together."""
 
 import os
+import sys
 import threading
 from typing import Optional
 
@@ -41,6 +42,7 @@ from model_manager import (
 )
 from streaming import OnlineASRProcessor
 from transcriber import FileTranscribeWorker, Transcriber
+from vad import make_vad
 
 try:
     import psutil
@@ -76,6 +78,7 @@ class WhisperWorker(QThread):
         self.ring = ring
         self.metrics = metrics
         self.processor = OnlineASRProcessor(transcriber, metrics=metrics)
+        self.vad: Optional[SileroVAD] = None
         self._stop_flag = threading.Event()
 
     def stop(self):
@@ -83,24 +86,72 @@ class WhisperWorker(QThread):
         self.ring.close()
 
     def run(self):
+        def _log_unhandled(exc_type, exc, tb):
+            self.metrics.log(f"LIVE WORKER CRASH: {exc}")
+        sys.excepthook = _log_unhandled
         try:
+            # Freeze the buffer until the current window commits: local agreement
+            # needs the SAME audio re-transcribed across passes. We only pull
+            # more audio when the buffer is empty (all committed/drained).
             while not self._stop_flag.is_set():
-                audio = self.ring.take(self.MAX_BATCH_SECONDS, timeout=0.5)
-                if audio is None:
+                if len(self.processor.audio_buffer) / 16000 >= self.processor.STEP_SEC:
+                    # A window is in flight — run a pass WITHOUT new audio.
+                    self._maybe_init_vad()
+                    try:
+                        start, end, committed = self.processor.process_iter()
+                        self.metrics.log(f"[worker] pass done: committed={committed!r} buf={len(self.processor.audio_buffer)/16000:.2f}s")
+                        raw = self.processor.transcript_buffer.new
+                        self.metrics.log(f"[worker] raw words this pass: {len(raw)} {[(round(float(w[0]),2), w[2].strip()) for w in raw[:5]]}")
+                    except Exception as e:
+                        self.metrics.log(f"live worker error: {e}")
+                        continue
+                    tentative = self.processor.get_tentative()
+                    self.metrics.log(f"[worker] emitting result: committed={committed!r} tentative={tentative!r}")
+                    self.result.emit((start, end, committed or "", tentative))
+                    continue
+                # Accumulate audio until we have a meaningful batch (~0.5s).
+                # Capture delivers tiny chunks (e.g. 341 samples = 0.02s); the
+                # VAD needs >= 480 samples to detect anything, and Whisper needs
+                # a real window. So collect until STEP_SEC before VAD/inference.
+                batch = None
+                while not self._stop_flag.is_set():
+                    audio = self.ring.take(self.MAX_BATCH_SECONDS, timeout=0.5)
+                    if audio is None:
+                        continue
+                    if batch is None:
+                        batch = audio
+                    else:
+                        batch = np.concatenate([batch, audio])
+                    if len(batch) / 16000 >= self.processor.STEP_SEC:
+                        break
+                if self._stop_flag.is_set() or batch is None:
                     continue
                 if self.metrics:
                     pending, dropped = self.ring.status()
                     self.metrics.set_ring_status(pending, dropped)
-                self.processor.insert_audio_chunk(audio)
-                try:
-                    start, end, committed = self.processor.process_iter()
-                except Exception as e:
-                    self.metrics.log(f"live worker error: {e}")
-                    continue
-                tentative = self.processor.get_tentative()
-                self.result.emit((start, end, committed or "", tentative))
+                rms = float(np.sqrt(np.mean(batch ** 2)))
+                self.metrics.log(f"[worker] took {len(batch)/16000:.2f}s batch, rms={rms:.4f}")
+                self._maybe_init_vad()
+                if self.vad is not None:
+                    onset = self.vad.process(batch)
+                    self.metrics.log(f"[worker] VAD onset={onset} (rms={rms:.4f})")
+                    if onset < 0:
+                        # Silence: drop it without touching Whisper.
+                        if self.metrics:
+                            self.metrics.record_silence(len(batch) / 16000)
+                        continue
+                self.processor.insert_audio_chunk(batch)
         finally:
             self.processor = None
+
+    def _maybe_init_vad(self):
+        if self.vad is None:
+            try:
+                self.vad = make_vad()
+                self.metrics.log(f"VAD loaded: {type(self.vad).__name__}")
+            except Exception as e:
+                self.metrics.log(f"VAD unavailable ({e}); running without VAD")
+                self.vad = None  # avoid retrying every pass
 
 
 class MainWindow(QMainWindow):
@@ -791,6 +842,7 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_live_result(self, result):
         start, end, committed, tentative = result
+        self.metrics.log(f"[ui] live result: committed={committed!r} tentative={tentative!r}")
         if committed:
             self._live_committed += committed + " "
         self._update_live_display(tentative)
@@ -801,6 +853,7 @@ class MainWindow(QMainWindow):
         t = THEMES[self._theme]
         if committed:
             self.transcript.append(f'<span style="color:{t["text"]};">{committed}</span>')
+        self.metrics.log(f"[ui] display updated: committed={committed!r} tentative={tentative!r}")
 
         cursor = self.transcript.textCursor()
         cursor.movePosition(QTextCursor.End)
@@ -909,6 +962,8 @@ class DebugConsole(QWidget):
             ("Latency (ring pending)", f"{s['ring_pending_sec']:.2f} s"),
             ("Max ring pending", f"{s['max_ring_pending_sec']:.2f} s"),
             ("Ring dropped audio", f"{s['ring_dropped_sec']:.1f} s"),
+            ("VAD silence drained", f"{s['silence_drained']:.1f} s"),
+            ("VAD skips", str(s["silence_skips"])),
             ("Inference / pass", f"{s['inference_ms_avg']:.0f} ms"),
             ("Inference events", str(s["inference_events"])),
             ("RT factor", f"{s['inference_ms_avg'] / 1000 / max(s['audio_processed_sec'] / max(s['inference_events'], 1), 1e-9):.2f}x"),
