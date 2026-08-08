@@ -1,6 +1,9 @@
 # OpenCaptions
 
-A Python desktop app for real-time audio transcription on Windows, using OpenAI's Whisper models.
+A Python desktop app for audio transcription on Windows, using OpenAI's Whisper models.
+
+<img width="1159" height="750" alt="image" src="https://github.com/user-attachments/assets/2618cb5d-184a-4e7c-a2af-8da1eb3dbb64" />
+
 
 ## Features
 
